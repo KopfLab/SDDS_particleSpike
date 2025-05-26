@@ -1,0 +1,39 @@
+# name of the job
+name: Compile SDDS led test
+
+# specify which paths to watch for changes
+on:
+  push:
+    paths:
+      - examples/led
+      - .github/workflows/compile.yaml
+      - .github/workflows/compile-led.yaml
+
+# run compile via the compile.yaml
+jobs:
+  compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        # CHANGE program and specify lib/aux and non-default src as needed
+        program:
+          - name: 'blink'
+        # CHANGE platforms as needed
+        platform: 
+          - {name: 'p2', version: '6.3.2'}
+          - {name: 'photon', version: '2.3.1'}
+          - {name: 'argon', version: '4.2.0'}
+
+    # program name
+    name: ${{ matrix.program.name }}-${{ matrix.platform.name }}-${{ matrix.platform.version }}
+
+    # workflow call
+    uses: ./.github/workflows/compile.yaml
+    secrets: inherit
+    with:
+      platform: ${{ matrix.platform.name }}
+      version: ${{ matrix.platform.version }}      
+      program: ${{ matrix.program.name }}
+      src: ${{ matrix.program.src || '' }}
+      lib: ${{ matrix.program.lib || '' }}
+      aux: ${{ matrix.program.aux || '' }}

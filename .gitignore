@@ -1,0 +1,65 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+*.bin
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+*_v*.fzz
+*.zip
+
+# compiled 3D printer code
+*.gcode
+
+# docs
+*.pdf
+*.heic
+*.png
+*.jpeg
+*.jpg
+*.docx
+*.xls
+*.xlsx
+
+# VS Code setup
+.vscode
+target
+
+# Compiled firmware
+bin/*.bin
+
+# Keys
+*.der
+*.pem
+
+# OS
+.DS_Store
+
+# gemfile
+Gemfile.lock
+
+# credentials
+credentials

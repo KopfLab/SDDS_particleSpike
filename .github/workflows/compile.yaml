@@ -1,0 +1,124 @@
+name: Base workflow for compile
+
+env:
+  # default program root and src folders
+  DEFAULT_PROGRAM_ROOT: examples/
+  DEFAULT_PROGRAM_SRC: /src
+
+on:
+  workflow_call:
+    inputs:
+      # name of the particle platform
+      platform:
+        required: true
+        type: string
+      # target version to compile for
+      version:
+        required: true
+        type: string
+      # name of the program
+      program:
+        required: true
+        type: string
+      # optional path to the program's sources, otherwise uses the env defaults to use PROGRAM_ROOT/program/PROGRAM_SRC
+      src:
+        required: true
+        type: string
+        default: ""
+      # optional path(s) to libraries to be included (must be in root or lib/ directory)
+      lib:
+        required: false
+        type: string
+        default: ""
+       # optional default sub folder for the source files in libraries
+      lib_sub_folder:
+        required: false
+        type: string
+        default: "/src"
+      # optional path(s) to specific resources to include in addition
+      aux:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    name: ${{ inputs.program }}-${{ inputs.platform }}-${{ inputs.version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive 
+
+      - name: Determine program sources folder
+        id: vars
+        run: |
+          if [ -z "${{ inputs.src }}" ]; then
+            echo "Assuming it's an example program with sources in ${{ env.DEFAULT_PROGRAM_ROOT }}${{ inputs.program }}${{ env.DEFAULT_PROGRAM_SRC }}"
+            echo "program_src=${{ env.DEFAULT_PROGRAM_ROOT }}${{ inputs.program }}${{ env.DEFAULT_PROGRAM_SRC }}" >> $GITHUB_OUTPUT
+          else
+            echo "Using provided program source folder"
+            echo "program_src=${{ inputs.src }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Gather application sources 
+        run: |
+          echo "Creating temporary source directory"
+          mkdir ${{ inputs.program }}
+          echo "Including sources from ${{ steps.vars.outputs.program_src }}"
+          mv ${{ steps.vars.outputs.program_src }}/* ${{ inputs.program }} 
+          echo "Including libraries:"
+          for lib in ${{ inputs.lib }}; do
+            if [ -d "$lib${{ inputs.lib_sub_folder }}" ]; then
+              echo " - $lib${{ inputs.lib_sub_folder }}/*"
+              mv $lib${{ inputs.lib_sub_folder }}/* ${{ inputs.program }}
+            elif [ -d "lib/$lib${{ inputs.lib_sub_folder }}" ]; then
+              echo " - lib/$lib${{ inputs.lib_sub_folder }}/*"
+              mv lib/$lib${{ inputs.lib_sub_folder }}/* ${{ inputs.program }}
+            else
+              echo " - could not find $lib${{ inputs.lib_sub_folder }}, make sure the folder exists"
+            fi
+          done
+          echo "Including auxiliary resources:"
+          for aux in ${{ inputs.aux }}; do
+            echo " - $aux"
+            mv $aux ${{ inputs.program }}
+          done
+
+      - name: Compile in cloud (on master)
+        if: ${{ github.ref == 'refs/heads/master' }}
+        id: compile
+        uses: particle-iot/compile-action@v1
+        with:
+          particle-access-token: ${{ secrets.PARTICLE_ACCESS_TOKEN }}
+          particle-platform-name: ${{ inputs.platform }}
+          device-os-version: ${{ inputs.version }}
+          sources-folder: ${{ inputs.program }}
+
+      - name: Move cloud binary
+        if: ${{ github.ref == 'refs/heads/master' }}
+        run: |
+          mv ${{ steps.compile.outputs.firmware-path }} ${{ inputs.program }}/${{ inputs.program }}-${{ inputs.platform }}-${{ inputs.version }}.bin
+
+      - name: Compile locally # if not on master or if cloud compile failed
+        if: ${{ failure() || github.ref != 'refs/heads/master' }}
+        id: localcompile
+        uses: particle-iot/compile-action@v1
+        with:
+          particle-platform-name: ${{ inputs.platform }}
+          device-os-version: ${{ inputs.version }}
+          sources-folder: ${{ inputs.program }}
+
+      - name: Move local binary
+        if: ${{ github.ref != 'refs/heads/master' }}
+        run: |
+          mv ${{ steps.localcompile.outputs.firmware-path }} ${{ inputs.program }}/${{ inputs.program }}-${{ inputs.platform }}-${{ inputs.version }}.bin
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.program }}-${{ inputs.platform }}-${{ inputs.version }}
+          path: ${{ inputs.program }}
