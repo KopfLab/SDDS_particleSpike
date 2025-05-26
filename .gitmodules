@@ -1,0 +1,3 @@
+[submodule "lib/SDDS"]
+	path = lib/SDDS
+	url = https://github.com/mLamneck/SDDS.git
