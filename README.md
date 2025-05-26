@@ -4,7 +4,7 @@
 
 ## How to compile on GitHub
 
-This happens automatically for all examples set up in the [GitHub workflows](.github/workflows) for each code push. For the [LED example](actions/workflows/compile-led.yaml), this is automatically done whenever there are changes to [the example source files](tree/main/examples/led/src) or changes to the commit checked out for the SDDS submodule, and the compiler runs for 3 different firmware versions + platforms (Photon/Argon/P2). The binaries (if compilation is successful) are stored as artifacts in the workflow runs for each firmware + platform under the *Upload binary* step. The compiler output for each platform is available under the *Compile locally* step.
+This happens automatically for all examples set up in the [GitHub workflows](.github/workflows) for each code push. For the [LED example](/actions/workflows/compile-led.yaml), this is automatically done whenever there are changes to [the example source files](examples/led/src) or changes to the commit checked out for the SDDS submodule, and the compiler runs for 3 different firmware versions + platforms (Photon/Argon/P2). The binaries (if compilation is successful) are stored as artifacts in the workflow runs for each firmware + platform under the *Upload binary* step. The compiler output for each platform is available under the *Compile locally* step.
 
 ## How to compile in the cloud
 
