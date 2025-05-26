@@ -18,7 +18,7 @@ jobs:
       matrix:
         # CHANGE program and specify lib/aux and non-default src as needed
         program:
-          - name: 'blink'
+          - name: 'led'
             lib: 'SDDS'
         # CHANGE platforms as needed
         platform: 
