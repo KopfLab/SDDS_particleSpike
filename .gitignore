@@ -63,6 +63,3 @@ Gemfile.lock
 
 # credentials
 credentials
-
-# src folder (for flexible development)
-src
