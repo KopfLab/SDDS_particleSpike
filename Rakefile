@@ -14,6 +14,7 @@
 ### EXAMPE PROGRAMS ###
 
 task :led => :compile
+task :cloudLed => :compile
 
 ### SETUP ###
 

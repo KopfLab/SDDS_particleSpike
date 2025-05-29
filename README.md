@@ -1,5 +1,8 @@
 [![led](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-led.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-led.yaml)
 
+[![cloudLed](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-cloudLed.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-cloudLed.yaml)
+
+
 # SDDS particle test
 
 ## How to compile on GitHub
