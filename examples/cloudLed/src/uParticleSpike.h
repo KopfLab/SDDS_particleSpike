@@ -51,6 +51,7 @@ class TparticleSpike : public TstringStream{
     void sendMessage(const char* _msg){
         // send cloud data
         // FIXME: this should
+        //  - if it's a structure request --> update the particle vars that capture the whole structure and/or publish it?
         //  - collect data bursts (over x seconds) into a single event
         //  - when offline, keep storing event data in memory and/or on flash memory
         //  - when online, manage (re) publishing events in memory/flash and delete from the queue once sucessful
@@ -59,7 +60,7 @@ class TparticleSpike : public TstringStream{
         //  - NOT deal with the publishing interval! that should happen on the sdds_var side I think so the ParticleSpike can just do its own thing and be done wiht it
 
         // log in Particle variable
-        logMessage(_msg, FsendLog);
+        logMessageInCloudVariable(_msg, FsendLog);
 
         // check if state is to just forget all messages
         if (FpublishState == TpublishState::e::forget) {
@@ -102,7 +103,7 @@ class TparticleSpike : public TstringStream{
         //  - return the path code if successful so that the caller knows what path to expect a response on? (and the error codes as negative?)
         //  - auto-save setting changes, subscription changes, etc. (actually, that should probably happen on the client side by sending params.action=save explicitly)
         Log.trace("received from cloud: %s", _msg.c_str());
-        logMessage(_msg.c_str(), FreceiveLog);
+        logMessageInCloudVariable(_msg.c_str(), FreceiveLog);
         FcommHandler.handleMessage(_msg.c_str());
         return(0);
     }
@@ -111,13 +112,15 @@ class TparticleSpike : public TstringStream{
 
     protected:
 
-    void logMessage(const char* _msg, char* _var) {
-        // append to call log
+    void logMessageInCloudVariable(const char* _msg, char* _var) {
+        // append to log stored in cloud var
         Variant msg_log = Variant::fromJSON(_var);
         Variant msg = Variant(_msg);
         msg_log.append(msg);
+        //size_t msg_cbor_size = getCBORSize(msg); //could use this instead of JSON but encoding to CBOR makes it not user-friendly to read
+        //encodeToCBOR(msg, Serial);
         size_t msg_log_size = msg_log.toJSON().length();
-        while (msg_log_size  >= particle::protocol::MAX_FUNCTION_ARG_LENGTH && !msg_log.isEmpty()) {
+        while (msg_log_size  >= (particle::protocol::MAX_FUNCTION_ARG_LENGTH - 1) && !msg_log.isEmpty()) {
             // remove the oldest entries until they fit
             msg_log.removeAt(0);
             msg_log_size = msg_log.toJSON().length();
@@ -125,10 +128,10 @@ class TparticleSpike : public TstringStream{
         if (msg_log.isEmpty()) {
             msg_log.append(
                 String::format("msg too long (%d characters), %d allowed", 
-                    msg.toJSON().length(), particle::protocol::MAX_FUNCTION_ARG_LENGTH)
+                    msg.toJSON().length(), particle::protocol::MAX_FUNCTION_ARG_LENGTH - 1)
             );
         }
-        // assign call log
+        // store in the cloud log
         snprintf(_var, particle::protocol::MAX_FUNCTION_ARG_LENGTH, "%s", msg_log.toJSON().c_str());
     }
 
