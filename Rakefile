@@ -16,6 +16,9 @@
 task :led => :compile
 task :cloudLed => :compile
 
+desc "compile particle spike 2"
+task :particleSpike2 => :compile
+
 ### SETUP ###
 
 # setup
@@ -36,6 +39,7 @@ examples_folder = "examples/"
 lib_folder = "lib/"
 bin_folder = "bin/"
 src_folder = "/src"
+local_folder = "local"
 
 # parameters
 platform = ENV['PLATFORM'] || 'p2'
@@ -117,6 +121,98 @@ task :compile do
   
   # compile
   sh "particle compile #{platform} #{src_files}#{lib_files}#{aux_files} --target #{version} --saveTo #{bin_folder}#{program}-#{platform}-#{version}.bin", verbose: false
+end
+
+### LOCAL COMPILE ###
+# todo: implement an :initLocal that takes the ENV['PROGRAM'] to reset the local/ folder
+# (see code for this in the Guardfile), and also stores the code base information (i.e. the program name to parse the workflows file) in the local/ folder
+# then guardfile for local just looks at the codebase in local and watches the corresponding files
+# to refresh
+
+task :hello do
+  puts("whatup")
+end
+
+desc "compiles the program in local/ with the local toolchain"
+task :compileLocal do
+  ENV['MAKE_LOCAL_TARGET'] = "compile-user"
+  Rake::Task[:makeLocal].invoke
+end
+
+desc "clean the program in local/"
+task :cleanLocal do
+  ENV['MAKE_LOCAL_TARGET'] = "clean-user"
+  Rake::Task[:makeLocal].invoke
+end
+
+require 'open3'
+
+desc "runs local toolchain make target"
+task :makeLocal do
+  # what program are we compiling?
+  target = ENV['MAKE_LOCAL_TARGET']
+  # info
+  puts "\nINFO: making '#{target}' in folder '#{local_folder}' for #{platform} #{version} with local toolchain"
+
+  # local folder
+  local_root = File.expand_path(File.dirname(__FILE__)) + "/" + local_folder
+  unless File.exist?("#{local_root}/src")
+    raise "src directory in local folder '#{local_root}' not found"
+  end
+
+  # compiler path
+  compiler_root = "#{ENV['HOME']}/.particle/toolchains/gcc-arm"
+  unless File.exist?(compiler_root)
+    raise "Compiler directory '#{compiler_root}' not found: particle workbench installed?"
+  end
+  compiler_version = Dir.children(compiler_root).sort.last
+  if compiler_version
+    puts " - found gcc-arm compiler version #{compiler_version}"
+  else
+    raise "No compiler found in '#{compiler_root}': particle workbench installed?"
+  end
+  compiler_path = "#{compiler_root}/#{compiler_version}/bin"
+  
+  # buildscript path
+  buildscript_root = "#{ENV['HOME']}/.particle/toolchains/buildscripts"
+  unless File.exist?(buildscript_root)
+    raise "Build script directory '#{buildscript_root}' not found: particle workbench installed?"
+  end
+  buildscript_version = Dir.children(buildscript_root).sort.last
+  if buildscript_version
+    puts " - found buildscript version #{buildscript_version}"
+  else
+    raise "No buildscript found in '#{buildscript_root}': particle workbench installed?"
+  end
+  buildscript_path = "#{buildscript_root}/#{buildscript_version}/Makefile"
+
+  # device os
+  device_os_path = "#{ENV['HOME']}/.particle/toolchains/deviceOS/#{version}"
+  unless File.exist?(device_os_path)
+    raise "Toolchain for target OS version ('#{device_os_path}') is not installed: have you installed this toolchain version? (vscode Particle: Install local compiler toolchain)"
+  end
+  cmd = "PATH=#{compiler_path}:$PATH /usr/bin/make -f \"#{buildscript_path}\" #{target} PLATFORM=#{platform} APPDIR=\"#{local_root}\" DEVICE_OS_PATH=\"#{device_os_path}\""
+  Open3.popen2e(cmd) do |stdin, stdout_and_err, wait_thr|
+    stdout_and_err.each { |line| puts line }
+    exit_status = wait_thr.value
+    abort "Command failed!" unless exit_status.success?
+    output_path = "#{local_root}/target/#{platform}/#{local_folder}.bin"
+    if File.exist?(output_path)
+      FileUtils.cp(output_path, "#{bin_folder}/local-#{platform}-#{version}.bin")
+    end
+  end
+end
+
+### AUTO-COMPILE ###
+
+desc "start automatic recompile of latest program in cloud"
+task :guardCloud do
+  sh "bundle exec guard -g cloud"
+end
+
+desc "start automatic recompile of latest program locally"
+task :guardLocal do
+  sh "bundle exec guard -g local"
 end
 
 ### FLASH ###
@@ -243,4 +339,29 @@ task :autoCompile, [:program, :platform, :version, :paths] do |t, args|
   end
   sh "bundle exec rake compile PROGRAM=#{args.program} PLATFORM=#{args.platform} VERSION=#{args.version}", verbose: false
   puts "**** RE-COMPILE COMPLETE ****"
+end
+
+### UML ###
+# to install:
+# docker pull plantuml/plantuml-server:jetty
+# docker run -d -p 8080:8080 plantuml/plantuml-server:jetty
+uml_docker = "plantuml/plantuml-server:jetty"
+
+desc "pull the docker image for plantuml"
+task :umlInstall do
+  puts "\nINFO: pulling/updating plantuml docker image ..."
+  sh "docker pull #{uml_docker}"
+end
+
+desc "start the docker container for plantuml"
+task :umlStart do
+  puts "\nINFO: starting plantUML server..."
+  sh "docker run -d -p 8080:8080 #{uml_docker}"
+  puts "set your PlantUML server url settings to http://localhost:8080/ or go to http://localhost:8080/ to generate UML diagrams"
+end
+
+desc "stop the docker container for plantuml"
+task :umlStop do
+  puts "\nINFO: stopping plantUML server..."
+  sh "docker stop $(docker ps -f \"ancestor=#{uml_docker}\" --format \"{{.ID}}\")"
 end
