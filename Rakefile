@@ -129,10 +129,6 @@ end
 # then guardfile for local just looks at the codebase in local and watches the corresponding files
 # to refresh
 
-task :hello do
-  puts("whatup")
-end
-
 desc "compiles the program in local/ with the local toolchain"
 task :compileLocal do
   ENV['MAKE_LOCAL_TARGET'] = "compile-user"

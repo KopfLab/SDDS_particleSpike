@@ -74,9 +74,37 @@ group :local do
         dest = "#{local_folder}/src/#{filename}"
         puts "synching #{m[0]} → #{dest}"
         FileUtils.cp(m[0], dest)
-        # recompile
-        system("rake compileLocal")
       end
+      # watch for compile and rake
+      watch(Regexp.new(pattern)) do |modified|
+        debounce(1.0) do
+          puts "\n\n *** detected changes, compiling after debounce ***"
+          # recompile
+          system("rake compileLocal")
+          # fixme, always?
+          system("rake flash")
+        end
+      end
+    end
+  end
+end
+
+
+require 'thread'
+
+# Shared debounce timer (per Guard process)
+$debounce_timer = nil
+$debounce_mutex = Mutex.new
+
+def debounce(delay = 1.0)
+  $debounce_mutex.synchronize do
+    if $debounce_timer
+      $debounce_timer.kill
+    end
+
+    $debounce_timer = Thread.new do
+      sleep delay
+      yield
     end
   end
 end
