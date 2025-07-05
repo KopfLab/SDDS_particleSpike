@@ -2,6 +2,7 @@
 
 [![cloudLed](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-cloudLed.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-cloudLed.yaml)
 
+[![particleSpike](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-particleSpike.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-particleSpike.yaml)
 
 # SDDS particle test
 
@@ -26,9 +27,8 @@ To compile locally from a local code copy:
 
  - install the VS Code extension for the Particle Toolbench following the instructions at https://docs.particle.io/getting-started/developer-tools/workbench/
  - enable pre-release versions of the tool chain as shown here: https://docs.particle.io/getting-started/developer-tools/workbench/#enabling-pre-release-versions
- - use the functionality of the VSCode extension (`Particle: Install Local Compiler Toolchain / Configure Project for device / Compile Appliation (local)`) to select a device OS toolchain (recommended: 6.3.2) and target platform (recommended: P2), and then run the compiler locally
- - note that the Particle compiler looks for sources only in root level `src` and in `lib/**/src` so the examples (of which there are often many) are a pain to compile as each needs to either be copied into the top-level `src` directory or copied somewhere else entirely for compiling (there's probably ways to optimize this with a rake target but I havn't figure out yet how to access the necessary environmental variables from the VS code extension)
-
+ - use the functionality of the VSCode extension (`Particle: Install Local Compiler Toolchain / Configure Project for device / Compile Appliation (local)`) to select a device OS toolchain (recommended: 6.3.2) and target platform (recommended: P2), and then run the compiler locally with `rake guardLocal` which automatically copies sources of the last cloud-compiled firmware into `local/` and compiles from there whenever something changes (and flashes the new code to a connected device via USB); if you're switching to a different example or have changes in a library, it is recommended to run `rake cleanLocal` before resuming with `rake guardLocal`
+ 
 ## Dependencies
 
 The following third-party software is used in this repository. See the linked GitHub repositories for the respective licensing text and license files.
