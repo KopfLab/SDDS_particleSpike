@@ -1025,16 +1025,6 @@ class TparticleSpike{
 		}
 
 		/**
-		 * @brief Particle.function sddsReleaseChannel
-		 * FIXME: lifecycle::questioning
-		 */
-		int releaseChannel(String _cmd) {
-			if (_cmd.length() == 0) return ERR_INV_CH;
-			if (!FvarResp.releaseChannel(_cmd.charAt(0))) return ERR_INV_CH;
-			return 0;
-		}
-
-		/**
 		 * @brief Particle.variable sddsGetTree
 		 */
 		String getTree() {
@@ -1215,9 +1205,6 @@ class TparticleSpike{
 			// particle functions to set variable and variable for logs
 			Particle.function("sddsSetVariables", &TparticleSpike::setVariables,this);
 			Particle.variable("sddsGetCommandLog", [this](){ return this->getCommandLog(); });
-			
-			// - FIXME: obsolete since channels are recycled even if unused?
-			//Particle.function("sddsReleaseChannel", &TparticleSpike::releaseChannel, this);
 		}
 
 		#pragma endregion
