@@ -81,7 +81,7 @@ group :local do
           puts "\n\n *** detected changes, compiling after debounce ***"
           # recompile
           system("rake compileLocal")
-          # fixme, always?
+          # fixme --> should check if copileLocal actually succeeded
           system("rake flash")
         end
       end

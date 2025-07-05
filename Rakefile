@@ -16,8 +16,8 @@
 task :led => :compile
 task :cloudLed => :compile
 
-desc "compile particle spike 2"
-task :particleSpike2 => :compile
+desc "compile particleSpike examplie"
+task :particleSpike => :compile
 
 ### SETUP ###
 
