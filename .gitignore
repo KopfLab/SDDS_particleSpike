@@ -48,6 +48,10 @@
 .vscode
 target
 
+# temp files
+tmp/
+backup/
+
 # Compiled firmware
 bin/*.bin
 
