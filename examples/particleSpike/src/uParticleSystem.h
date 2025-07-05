@@ -102,9 +102,6 @@ class TparticleSystem : public TmenuHandle {
         // publishing variables
         class Tpublishing : public TmenuHandle{
 
-            // FIMXE: revisit the naming for these as it should include all messages not just bursts! (also other publish)
-            // FIXME: add a method that adds to the dataQueue --> rename the queue to be burst independent
-            // publishing bursts
             class Tbursts : public TmenuHandle{
                 public:
                     sdds_var(Tuint32, timerMS, sdds::opt::saveval, 1000) // how many MS is a data burst?
