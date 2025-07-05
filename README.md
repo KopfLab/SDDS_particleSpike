@@ -35,7 +35,7 @@ The following third-party software is used in this repository. See the linked Gi
 
 | **Dependency**    | **Website**                               | **License** |
 |-------------------|-------------------------------------------|-------------|
-| SDDS              | https://github.com/mLamneck/SDDS          | ?           |
+| SDDS              | https://github.com/mLamneck/SDDS          | MIT         |
 
 
 
