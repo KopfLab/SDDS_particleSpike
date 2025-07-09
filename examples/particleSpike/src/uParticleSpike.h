@@ -284,13 +284,17 @@ class TparticleSpike{
 				/**
 				 * @brief serialize data for transmission in data bursts
 				 */
-				static Variant serializeData(dtypes::uint32 _n, dtypes::float32 _value, dtypes::float32 _sdev) {
+				static Variant serializeData(dtypes::uint32 _n, dtypes::float32 _value, dtypes::float32 _sdev, Tdescr* _unit = nullptr) {
 					Variant data;
 					data.set(FburstNumValueKey, _value);
 					data.set(FburstNumCountKey, _n);
 					if (_n > 1) {
 						// no point including sdev if there's only one data point
 						data.set(FburstNumSdevKey, _sdev);
+					}
+					if (_unit && _unit->type() == sdds::Ttype::STRING) {
+						// got a unit (double checking that it's string)
+						data.set(FburstUnitsKey, _unit->to_string().c_str());
 					}
 					return data;
 				}
@@ -301,7 +305,7 @@ class TparticleSpike{
 					return data;
 				}
 
-				static Variant serializeData(Tdescr *_d) {
+				static Variant serializeData(Tdescr *_d, Tdescr* _unit = nullptr) {
 					Variant data;
 					auto dt = _d->type();
 					if (dt == sdds::Ttype::ENUM || dt == sdds::Ttype::STRING || dt == sdds::Ttype::TIME) {
@@ -310,6 +314,10 @@ class TparticleSpike{
 					} else {
 						// numeric value
 						data.set(FburstNumValueKey, serializeValue(_d));
+					}
+					if (_unit && _unit->type() == sdds::Ttype::STRING) {
+						// got a unit (double checking that it's string)
+						data.set(FburstUnitsKey, _unit->to_string().c_str());
 					}
 					return data;
 				}
@@ -757,6 +765,10 @@ class TparticleSpike{
 		/*** automatic publishing of sdds variables  ***/
 		#pragma region variables publish
 
+		// auto-detection of unit vars
+		bool FunitAutoDetect;
+		dtypes::string FunitVarName;
+
 		/**
 		 * @brief menu handle with provided name
 		 */
@@ -785,6 +797,7 @@ class TparticleSpike{
 				}
 			protected:
 				Tdescr* FvarOrigin = nullptr;
+				Tdescr* FlinkedUnit = nullptr;
 				TparticlePublisher* Fpublisher = nullptr;
 				system_tick_t FlastUpdateTime = 0;
 				// override in derived classes
@@ -796,10 +809,10 @@ class TparticleSpike{
 				}
 				virtual Variant getDataForPublish() {
 					// default is just the value of the variable
-					return TparticleSerializer::serializeData(FvarOrigin);	
+					return TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit);	
 				}
 			public:
-				TparticleVarWrapper(Tdescr* _voi, TparticlePublisher* _pub) : FvarOrigin(_voi), Fpublisher(_pub) {
+				TparticleVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : FvarOrigin(_voi), Fpublisher(_pub), FlinkedUnit(_unit) {
 					Fvalue = 0;
 
 					// call back for origin value change
@@ -809,7 +822,7 @@ class TparticleSpike{
 							if (Fvalue == 1) {
 								// publish current variable value immediately
 								if (Fpublisher) {
-									Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin));
+									Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit));
 								}
 							} else {
 								// collect values
@@ -940,11 +953,11 @@ class TparticleSpike{
 				}
 				
 				Variant getDataForPublish() override {
-					return TparticleSerializer::serializeData(FsumCnt, Favg, stdDev());	
+					return TparticleSerializer::serializeData(FsumCnt, Favg, stdDev(), FlinkedUnit);	
 				}
 
 			public:
-				TparticleAveragingVarWrapper(Tdescr* _voi, TparticlePublisher* _pub) : TparticleVarWrapper(_voi, _pub) {
+				TparticleAveragingVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : TparticleVarWrapper(_voi, _pub, _unit) {
 				}
 		};
 
@@ -956,24 +969,28 @@ class TparticleSpike{
 				auto d = it.current();
 				if (!d) continue;
 
-				// FIXME: somehow figure out if there is a "unit" following this Tdesc
-
+				// is there a linked unit?
+				Tdescr* linkedUnit = nullptr;
+				if (FunitAutoDetect && d->next() && d->next()->type() == sdds::Ttype::STRING && d->next()->name() == FunitVarName) {
+					linkedUnit = d->next();
+				}
+	
 				// averaging wrappers for the numeric data types
 				auto dt = d->type();
 				if (dt == sdds::Ttype::UINT8)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint8>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint8>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::UINT16)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint16>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint16>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::UINT32)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint32>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::INT8)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tint8>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tint8>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::INT16)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tint16>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tint16>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::INT32)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tint32>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tint32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::FLOAT32)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tfloat32>(d, &Fpublisher));
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tfloat32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::STRUCT){
 					// recursive structure
 					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
@@ -984,7 +1001,7 @@ class TparticleSpike{
 					} 
 				} else {
 					// non-averaging for everything else (enum, string)
-					_dst->addDescr(new TparticleVarWrapper(d, &Fpublisher));
+					_dst->addDescr(new TparticleVarWrapper(d, &Fpublisher, linkedUnit));
 				}
 
 			}
@@ -1056,11 +1073,17 @@ class TparticleSpike{
 
 		/**
 		 * @brief particle spike consturctor
+		 * @param _root the sdds tree
+		 * @param _type name of the structure type, i.e. what kind of device is this? ("pump", "mfc", etc.)
+		 * @param _version version of the structure type to inform servers who have cached structure when the structure type has been updated
+		 * @param _unit name of unit vars for auto-detecting units (pass "" to turn auto-detection off)
 		 */
-		TparticleSpike(TmenuHandle& _root, const dtypes::string& _type, dtypes::uint16 _version): Fpch(_root, nullptr) {
+		TparticleSpike(TmenuHandle& _root, const dtypes::string& _type, dtypes::uint16 _version, const dtypes::string& _unit): Fpch(_root, nullptr) {
 			Froot = _root;
 			sddsParticleSystem.type = _type;
 			sddsParticleSystem.version = _version;
+			FunitVarName = _unit;
+			FunitAutoDetect = FunitVarName != "";
 
 			// custom system actions
 			on(sddsParticleSystem.action) {
