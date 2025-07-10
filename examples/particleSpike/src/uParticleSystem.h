@@ -114,7 +114,7 @@ class TparticleSystem : public TmenuHandle {
 
             public:
                 sdds_var(TonOff, publish, sdds::opt::saveval,TonOff::e::OFF) // global on/off for publishing to the cloud
-                sdds_var(Tstring, event, sdds::opt::saveval, "data") // publish event name
+                sdds_var(Tstring, event, sdds::opt::saveval, "sddsData") // publish event name
                 sdds_var(Tbursts, bursts) // burst information
                 sdds_var(Tuint32, globalIntervalMS, sdds::opt::saveval, 1000 * 60 * 10) // global publish interval
         };
