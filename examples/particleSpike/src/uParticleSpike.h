@@ -641,8 +641,7 @@ class TparticleSpike{
 							}
 						} else {	
 							// publishing is OFF --> discard
-							Log.trace("*** DISCARDING BURST ***\n --> because %s", 
-								sddsParticleSystem.publishing.publish == TonOff::e::OFF ? "publishing is OFF" : "not ready to publish");
+							Log.trace("*** DISCARDING BURST ***\n --> because publishing is OFF");
 						}
 
 						// clear?
@@ -793,15 +792,13 @@ class TparticleSpike{
 				Ttimer Ftimer;
 				TcallbackWrapper FintervalCbw{this};
 				TcallbackWrapper ForiginCbw{this};
-				void _changeValue() {
-				}
 			protected:
 				Tdescr* FvarOrigin = nullptr;
 				Tdescr* FlinkedUnit = nullptr;
 				TparticlePublisher* Fpublisher = nullptr;
 				system_tick_t FlastUpdateTime = 0;
 				// override in derived classes
-				virtual void reset() {}
+				virtual void clear() {}
 				virtual void changeValue(){}
 				virtual system_tick_t getTimeForPublish() {
 					// default is the last update time
@@ -828,8 +825,6 @@ class TparticleSpike{
 								// collect values
 								FlastUpdateTime = millis();
 								changeValue(); // note: always triggers, even if value hasn't actually changed (i.e. set to the same it already is)
-								if (!Ftimer.running()) 
-									Ftimer.start(Fvalue); // starting timer when first value is set
 							}
 						}
 					};
@@ -842,16 +837,20 @@ class TparticleSpike{
 						// reset callback, timer and values
 						FvarOrigin->callbacks()->remove(&ForiginCbw);
 						Ftimer.stop();
-						FlastUpdateTime = 0; // reset to no value
-						reset(); // reset for the override function
+						reset();
 						
-						// no publish trigger
-						if (Fvalue <= 0) return;
+						// no publishing
+						if (Fvalue == 0) return;
 						
 						// add publich callback
 						FvarOrigin->callbacks()->addCbw(ForiginCbw);
-						if (Fvalue > 1 && Fvalue < 1000) Fvalue = 1000; // min interval is 1 second
-						Ftimer.start(Fvalue);
+
+						// if Fvalue is set (not -1) --> start own timer
+						// (if Fvalue is -1, the publish trigger comes from the global)
+						if (Fvalue > 0) {
+							if (Fvalue > 1 && Fvalue < 1000) Fvalue = 1000; // min interval is 1 second
+							Ftimer.start(Fvalue);
+						}
 					};
 					callbacks()->addCbw(FintervalCbw);
 					
@@ -868,6 +867,14 @@ class TparticleSpike{
 				void operator=(Tuint32::dtype _v) { __setValue(_v); }
 				template <typename T>
 				void operator=(T _val) { __setValue(_val); }
+				
+				/**
+				 * @brief reset the data storage
+				 */
+				void reset() {
+					FlastUpdateTime = 0; // reset to no value
+					clear();
+				}
 
 				/**
 				 * @brief does this use the global publishing interval?
@@ -884,8 +891,7 @@ class TparticleSpike{
 					if (Fpublisher) {
 						Fpublisher->addToBurst(FvarOrigin, getTimeForPublish(), getDataForPublish());
 					}
-					FlastUpdateTime = 0; // reset to no value
-					reset(); // reset for the override function
+					reset();
 				}
 		};
 
@@ -904,13 +910,6 @@ class TparticleSpike{
 				dtypes::float32 Fm2 = 0;
 				dtypes::float32 Ftime = 0;
 			
-				void clear () {
-					FsumCnt = 0;
-					Favg = 0;
-					Fm2 = 0;
-					Ftime = 0;
-				}
-
 				void add(dtypes::float32 x) {
 					FsumCnt++;
 					if (FsumCnt > 1) {
@@ -940,8 +939,11 @@ class TparticleSpike{
 			protected:
 				sdds_dtype* typedVoi(){ return static_cast<sdds_dtype*>(this->FvarOrigin); } 
 
-				void reset() override{
-					clear();
+				void clear () override {
+					FsumCnt = 0;
+					Favg = 0;
+					Fm2 = 0;
+					Ftime = 0;
 				}
 
 				void changeValue() override{
@@ -1004,6 +1006,52 @@ class TparticleSpike{
 					_dst->addDescr(new TparticleVarWrapper(d, &Fpublisher, linkedUnit));
 				}
 
+			}
+		}
+
+		/**
+		 * @brief reset values of global publish vars
+		 */
+		void resetGlobal(TmenuHandle* _dst) {
+			for (auto it=_dst->iterator(); it.hasCurrent(); it.jumpToNext()){
+				auto d = it.current();
+				if (!d) continue;
+				if (d->type() == sdds::Ttype::STRUCT){
+					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
+					if (mh) resetGlobal(mh);
+				} else {
+					TparticleVarWrapper* pvw = static_cast<TparticleVarWrapper*>(d);
+					pvw->reset();
+				}
+			}
+		}
+		void resetGlobal() {
+			if (sddsParticleSystem.startup == TstartuStatus::e::complete) {
+				// if we're fully started up, reset the variables (otherwise they might not yet be created)
+				resetGlobal(&sddsParticleVariables);
+			}
+		}
+
+		/**
+		 * @brief publish values of global publish vars
+		 */
+		void publishGlobal(TmenuHandle* _dst) {
+			for (auto it=_dst->iterator(); it.hasCurrent(); it.jumpToNext()){
+				auto d = it.current();
+				if (!d) continue;
+				if (d->type() == sdds::Ttype::STRUCT){
+					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
+					if (mh) publishGlobal(mh);
+				} else {
+					TparticleVarWrapper* pvw = static_cast<TparticleVarWrapper*>(d);
+					pvw->publish();
+				}
+			}
+		}
+		void publishGlobal() {
+			if (sddsParticleSystem.startup == TstartuStatus::e::complete) {
+				// if we're fully started up, publish the variables (otherwise they might not yet be created)
+				publishGlobal(&sddsParticleVariables);
 			}
 		}
 
@@ -1110,15 +1158,27 @@ class TparticleSpike{
                 if (sddsParticleSystem.publishing.globalIntervalMS < 1000) 
                     sddsParticleSystem.publishing.globalIntervalMS = 1000; // don't allow publishing any faster than once a second
 				FglobalPublishTimer.stop();
-				// FIXME: reset all TvarWrappers? probably yes! (make sure it's also the Tlasttime, not just the reset())
+				resetGlobal();
 				FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);		
             };
 			FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
 
+			// (re)start timer when publishing is turned on
+			on(sddsParticleSystem.publishing.publish) {
+				// Q: should this only trigger if it is _changed_ to ON?
+				// (currently this triggers every time it's set even if it's already ON)
+				if (sddsParticleSystem.publishing.publish == TonOff::e::ON) {
+					FglobalPublishTimer.stop();
+					resetGlobal();
+					FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
+				}
+			};
+
 			// publish timer triggers
 			on(FglobalPublishTimer) {
 				Log.trace("*** GLOBAL PUBLISH TIMER ***");
-				// FIXME: loop through all TvarWrapper and those that have globalPublishInterval --> trigger publish
+				publishGlobal(); // variables reset themselves
+				FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
 			};
 
 			// startup complete
