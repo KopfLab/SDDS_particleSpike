@@ -21,6 +21,7 @@ class Tled : public TmenuHandle{
         sdds_var(TonOff,blinkSwitch,sdds::opt::saveval)
         sdds_var(Tuint16,onTime,sdds::opt::saveval,500)
         sdds_var(Tuint16,offTime,sdds::opt::saveval,500)
+        sdds_var(Tfloat32,meas)
         sdds_var(Tstring,unit,sdds::opt::saveval,"mM")
         
         Tled(){
@@ -77,7 +78,19 @@ static TparticleSpike particleSpike(
 );
 
 void setup(){
-    particleSpike.setup();
+    // setup particle communication
+    using publish = sdds::particle::publish;
+    particleSpike.setup(
+        // set default publishing intervals for anything that should be different from publish::OFF
+        {
+            // --> all variables that are stored in EEPROM (saveeval option) should report all changes
+            {publish::ALWAYS, sdds::opt::saveval},
+            // --> all floats should inherit from the globalInterval (regardless of whether they are saved or not)
+            {publish::GLOBAL, {sdds::Ttype::FLOAT32}},
+            // --> for this particular class, the ledSwitch should also inherit from globalInterval
+            {publish::GLOBAL, &userStruct.led.ledSwitch}
+        }
+    );
 }
 
 void loop(){

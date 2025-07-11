@@ -7,14 +7,27 @@
 #include "uParticleSystem.h"
 
 TparticleSystem sddsParticleSystem;
-TparticleVariableIntervals sddsParticleVariables;
+
+// define the publishing interval constants
+namespace sdds{
+
+	namespace particle {
+
+		enum publish {
+			GLOBAL = -1,
+			OFF = 0,
+			ALWAYS = 1
+		};
+	};
+}
 
 class TparticleSpike{
 
 	private:
 
+		// namespaces
+		using publish = sdds::particle::publish;
 		using TonOff = sdds::enums::OnOff;
-
 
 		/*** particle serializer (to Variants)  ***/
 		#pragma region serializer
@@ -641,7 +654,7 @@ class TparticleSpike{
 							}
 						} else {	
 							// publishing is OFF --> discard
-							Log.trace("*** DISCARDING BURST ***\n --> because publishing is OFF");
+							Log.trace("*** DISCARDING BURST because publishing is OFF ***");
 						}
 
 						// clear?
@@ -769,6 +782,16 @@ class TparticleSpike{
 		dtypes::string FunitVarName;
 
 		/**
+		 * @brief the container for the variables; interval menu
+		 */
+		class TparticleVariableIntervals : public TmenuHandle {
+			private:
+				Tmeta meta() override { return Tmeta{TYPE_ID, 0, "varIntervalsMS"}; }
+			public:
+				TparticleVariableIntervals() {}
+		} sddsParticleVariables;
+
+		/**
 		 * @brief menu handle with provided name
 		 */
 		class TnamedMenuHandle : public TmenuHandle{
@@ -779,12 +802,7 @@ class TparticleSpike{
 		};
 
 		/**
-		 * @brief keeps track of the publish intervals
-		 * -1		-> use the globalPublishInterval
-		 * 0 		-> no publishes (default)
-		 * 1 		-> publish on change
-		 * 0-999 	-> not allowed
-		 * 1000+ 	-> publish every 1000+ ms
+		 * @brief keeps track of the publish intervals, see setVariableInterval
 		 * 
 		 */
 		class TparticleVarWrapper : public Tint32 {
@@ -810,13 +828,13 @@ class TparticleSpike{
 				}
 			public:
 				TparticleVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : FvarOrigin(_voi), Fpublisher(_pub), FlinkedUnit(_unit) {
-					Fvalue = 0;
+					Fvalue = publish::OFF;
 
 					// call back for origin value change
 					ForiginCbw = [this](void* _ctx){ 
 						// only start collecting values once startup is complete
 						if (sddsParticleSystem.startup == TstartuStatus::e::complete) {
-							if (Fvalue == 1) {
+							if (Fvalue == publish::ALWAYS) {
 								// publish current variable value immediately
 								if (Fpublisher) {
 									Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit));
@@ -831,24 +849,21 @@ class TparticleSpike{
 
 					// call back for the publish interval changing
 					FintervalCbw = [this](void* _ctx){ 
-						Log.trace("new publish interval value for %s: %lu", 
-							TparticleSerializer::getVarPath(FvarOrigin).c_str(), Fvalue);
-
+				
 						// reset callback, timer and values
 						FvarOrigin->callbacks()->remove(&ForiginCbw);
 						Ftimer.stop();
 						reset();
 						
 						// no publishing
-						if (Fvalue == 0) return;
+						if (Fvalue == publish::OFF) return;
 						
 						// add publich callback
 						FvarOrigin->callbacks()->addCbw(ForiginCbw);
 
-						// if Fvalue is set (not -1) --> start own timer
-						// (if Fvalue is -1, the publish trigger comes from the global)
-						if (Fvalue > 0) {
-							if (Fvalue > 1 && Fvalue < 1000) Fvalue = 1000; // min interval is 1 second
+						// if Fvalue is set > ALWAYS --> start own timer
+						if (Fvalue > publish::ALWAYS) {
+							if (Fvalue < 1000) Fvalue = 1000; // min interval is 1 second
 							Ftimer.start(Fvalue);
 						}
 					};
@@ -880,7 +895,7 @@ class TparticleSpike{
 				 * @brief does this use the global publishing interval?
 				 */
 				bool usesGlobalPublishingInterval() {
-					return (Fvalue == -1);
+					return (Fvalue == publish::GLOBAL);
 				}
 
 				/**
@@ -1008,12 +1023,125 @@ class TparticleSpike{
 
 			}
 		}
+		void createVariableIntervalsTree(TmenuHandle* _src){
+			createVariableIntervalsTree(_src, &sddsParticleVariables);
+			sddsParticleSystem.publishing.addDescr(sddsParticleVariables);
+		}
+
+		/**
+		 * @brief set defaults for variables intervals tree
+		 * @param _default value to set
+		 * @param _optsFilter options filter
+		 * @param _dtypes data types filter
+		 */
+		void setVariableIntervalsDefault(TmenuHandle* _vars, dtypes::int32 _default, int _optsFilter, const std::vector<sdds::Ttype>& _dtypes) {
+			if (_default > 1 && _default < 1000) _default = 1000; // min interval is 1 second
+			for (auto it=_vars->iterator(); it.hasCurrent(); it.jumpToNext()){
+				auto d = it.current();
+				if (!d) continue;
+				if (d->type() == sdds::Ttype::STRUCT){
+					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
+					if (mh) {
+						setVariableIntervalsDefault(mh, _default, _optsFilter, _dtypes);
+					}
+				} else {
+					TparticleVarWrapper* pvw = static_cast<TparticleVarWrapper*>(d);
+					if (_optsFilter >= 0) {
+						// opts filter is active, check if d has the requested option(s)
+						if ((pvw->origin()->meta().option & _optsFilter) != _optsFilter) continue;
+					}
+					if (!_dtypes.empty()) {
+						// dtypes are provided, make sure it's one of them
+						bool is_in_dtypes = false;
+						for (size_t i = 0; i < _dtypes.size(); ++i) {
+							if(pvw->origin()->type() == _dtypes[i]) {
+								is_in_dtypes = true;
+								break;
+							}
+						}
+						if (!is_in_dtypes) continue;
+					}
+					// opts filter and dtypes filter didn't throw us out --> set interval to the provided default
+					pvw->Fvalue = _default;
+					Log.trace("SETTING %s interval to %d", d->name(), pvw->Fvalue);
+				}
+			}
+		}
+
+		/**
+		 * @brief set variable interval for a specific variable
+		 * @param _var variable pointer
+		 * @param _interval interval value to set
+		 * sdds::particle::publish::GLOBAL		-> use the globalPublishInterval
+		 * sdds::particle::publish::OFF 		-> no publishes (initial default)
+		 * sdds::particle::publish::ALWAYS 		-> publish on change
+		 * < 1000 	-> not allowed
+		 * 1000+ 	-> publish every 1000+ ms
+		 * @return whether _var was found in any of the variable intervals' origin
+		 */
+		bool setVariableInterval(TmenuHandle* _vars, dtypes::int32 _interval, Tdescr* _var) {
+			if (_interval > 1 && _interval < 1000) _interval = 1000; // min interval is 1 second
+			for (auto it=_vars->iterator(); it.hasCurrent(); it.jumpToNext()){
+				auto d = it.current();
+				if (!d) continue;
+				if (d->type() == sdds::Ttype::STRUCT){
+					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
+					if (mh) {
+						if (setVariableInterval(mh, _interval, _var)) return true;
+					}
+				} else {
+					TparticleVarWrapper* pvw = static_cast<TparticleVarWrapper*>(d);
+					if (pvw->origin() == _var) {
+						// found the matching wrapper
+						pvw->Fvalue = _interval;
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+		
+		/**
+		 * @brief publishing interval default
+		 */
+		struct TintervalDefault {
+			dtypes::int32 Finterval;
+			Tdescr* Fvar = nullptr;
+			dtypes::int16 FoptsFilter = -1;
+			std::vector<sdds::Ttype> FdtypeFilter = {};
+			TintervalDefault(dtypes::int32 _interval, Tdescr* _var) : 
+				Finterval(_interval), Fvar(_var) {}
+			TintervalDefault(dtypes::int32 _interval, const std::vector<sdds::Ttype>& _dtypes) :
+				Finterval(_interval), FdtypeFilter(_dtypes) {}
+			TintervalDefault(dtypes::int32 _interval, dtypes::int16 _opts) :
+				Finterval(_interval), FoptsFilter(_opts) {}
+			TintervalDefault(dtypes::int32 _interval, dtypes::int16 _opts, const std::vector<sdds::Ttype>& _dtypes) :
+				Finterval(_interval), FoptsFilter(_opts), FdtypeFilter(_dtypes) {}
+		};
+
+		/**
+		 * @brief default during setup
+		 */
+		void setupDefaults(const std::vector<TintervalDefault>& _defaults){
+			// set defaults
+			for (size_t i = 0; i < _defaults.size(); ++i) {
+				if (_defaults[i].Fvar)
+					// single variable default
+					setVariableInterval(&sddsParticleVariables, _defaults[i].Finterval, _defaults[i].Fvar);
+				else
+					// default by opts/type filter
+					setVariableIntervalsDefault(&sddsParticleVariables, _defaults[i].Finterval, _defaults[i].FoptsFilter, _defaults[i].FdtypeFilter);
+			}
+		}
 
 		/**
 		 * @brief reset values of global publish vars
 		 */
-		void resetGlobal(TmenuHandle* _dst) {
-			for (auto it=_dst->iterator(); it.hasCurrent(); it.jumpToNext()){
+		void resetGlobal() {
+			resetGlobal(&sddsParticleVariables);
+		}
+		void resetGlobal(TmenuHandle* _vars) {
+			for (auto it=_vars->iterator(); it.hasCurrent(); it.jumpToNext()){
 				auto d = it.current();
 				if (!d) continue;
 				if (d->type() == sdds::Ttype::STRUCT){
@@ -1025,16 +1153,13 @@ class TparticleSpike{
 				}
 			}
 		}
-		void resetGlobal() {
-			if (sddsParticleSystem.startup == TstartuStatus::e::complete) {
-				// if we're fully started up, reset the variables (otherwise they might not yet be created)
-				resetGlobal(&sddsParticleVariables);
-			}
-		}
 
 		/**
 		 * @brief publish values of global publish vars
 		 */
+		void publishGlobal() {
+			publishGlobal(&sddsParticleVariables);
+		}
 		void publishGlobal(TmenuHandle* _dst) {
 			for (auto it=_dst->iterator(); it.hasCurrent(); it.jumpToNext()){
 				auto d = it.current();
@@ -1046,12 +1171,6 @@ class TparticleSpike{
 					TparticleVarWrapper* pvw = static_cast<TparticleVarWrapper*>(d);
 					pvw->publish();
 				}
-			}
-		}
-		void publishGlobal() {
-			if (sddsParticleSystem.startup == TstartuStatus::e::complete) {
-				// if we're fully started up, publish the variables (otherwise they might not yet be created)
-				publishGlobal(&sddsParticleVariables);
 			}
 		}
 
@@ -1219,6 +1338,13 @@ class TparticleSpike{
 					//Log.trace("\nCBOR in base64 (size %d): ", base64.length());
 					//Log.print(base64);
 					//Log.print("\n");
+				} else if (sddsParticleSystem.debug == TdebugAction::e::setDefaults) {
+					setupDefaults(
+						{
+							{publish::ALWAYS, sdds::opt::saveval},
+            				{publish::GLOBAL, {sdds::Ttype::FLOAT32}}
+						}
+					);
 				}
 				if (sddsParticleSystem.debug != TdebugAction::e::___) {
 					sddsParticleSystem.debug = TdebugAction::e::___;
@@ -1231,18 +1357,21 @@ class TparticleSpike{
 		 * @brief call during setup() to initialize the SYSTEM menu and all particle variables and functions
 		 * @note this runs BEFORE any on(sdds::setup())
 		 */
-		void setup(){
+		void setup(const std::vector<TintervalDefault>& _defaults = {}){
 			// add SYSTEM menu
 			Froot->addDescr(&sddsParticleSystem, 0);
 			
 			// generate publishing intervals tree for all variables
-			createVariableIntervalsTree(Froot, &sddsParticleVariables);
-			sddsParticleSystem.publishing.addDescr(sddsParticleVariables);
+			createVariableIntervalsTree(Froot);
+
+			// set defaults
+			setupDefaults(_defaults);
 			
 			// store complete SDDS structure in FstructVar
 			FstructVar = TparticleSerializer::serializeParticleTree(Froot);
 			
             // process device reset information
+			bool resetState = false; // whether to reset the state/EEPROM
 			System.enableFeature(FEATURE_RESET_INFO);
             if (System.resetReason() == RESET_REASON_PANIC) {
                 // uh oh - reset due to PANIC (e.g. segfault)
@@ -1267,18 +1396,23 @@ class TparticleSpike{
                     Log.trace("restarted per user request");
                     sddsParticleSystem.vitals.lastRestart = TresetStatus::e::userRestart;
                 } else if (userReset == static_cast<uint8_t>(TresetStatus::e::userReset)) {
+					resetState = true;
                     // user requested a restart
                     Log.trace("restarted and resetting per user request");
-                    sddsParticleSystem.vitals.lastRestart = TresetStatus::e::userReset;
-					sdds::paramSave::Tstream::INIT();
-					sdds::paramSave::TparamStreamer ps;
-					sdds::paramSave::Tstream s;
-					ps.save(Froot,&s);
+					sddsParticleSystem.vitals.lastRestart = TresetStatus::e::userReset;
                 } 
             } else {
                 // report any of the other reset reasons? 
                 // https://docs.particle.io/reference/cloud-apis/api/#spark-device-last_reset
             }
+
+			// reset state params?
+			if (resetState) {
+				sdds::paramSave::Tstream::INIT();
+				sdds::paramSave::TparamStreamer ps;
+				sdds::paramSave::Tstream s;
+				ps.save(Froot,&s);
+			}
 
 			// particles variables to retrieve tree and values
 			Particle.variable("sddsGetTree", [this](){ return this->getTree(); });

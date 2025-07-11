@@ -14,20 +14,6 @@ SYSTEM_THREAD(ENABLED);
 // and the system thread isn't tied up during Particle.subscribe/function/variable
 SYSTEM_MODE(SEMI_AUTOMATIC);
 
-/**
- * @brief automatically added menu item that keeps track of publishing intervals for all variables
- */
-class TparticleVariableIntervals : public TmenuHandle {
-
-    private:
-
-        Tmeta meta() override { return Tmeta{TYPE_ID, 0, "varIntervalsMS"}; }
-
-    public:
-
-        TparticleVariableIntervals() {}
-};
-
 // sdds enumerations
 sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, snapshot) TsystemAction;
 sdds_enum(connecting, connected, disconnected) TinternetStatus;
@@ -35,7 +21,7 @@ sdds_enum(nominal, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) 
 sdds_enum(___, complete) TstartuStatus;
 
 #ifdef SDDS_PARTICLE_DEBUG
-sdds_enum(___, getValues, getTree) TdebugAction;
+sdds_enum(___, getValues, getTree, setDefaults) TdebugAction;
 #else
 sdds_enum(___) TdebugAction;
 #endif
@@ -67,7 +53,7 @@ class TparticleSystem : public TmenuHandle {
         // vitals variables
         class Tvitals : public TmenuHandle{
             public:
-                sdds_var(Tuint32,publishVitalsSEC,sdds::opt::saveval,0) // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
+                sdds_var(Tuint32,publishVitalsSEC,sdds::opt::saveval,60*60*6) // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
                 sdds_var(Tstring,time,sdds::opt::readonly) // system time
                 sdds_var(Tstring,mac, sdds::opt::readonly) // wifi network - can get this from device list
                 sdds_var(Tstring,network, sdds::opt::readonly) // wifi network - can get this from device vitals
