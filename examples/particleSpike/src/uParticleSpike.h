@@ -354,7 +354,7 @@ class TparticleSpike{
 
 					// time base (if valid time, otherwise NULL and the offset is machine time in millis)
 					if (Time.isValid()) {
-						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float32>(_refTime)/1000));
+						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float32>(millis() - _refTime)/1000));
 						burst.set(FburstTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
 					} else {
 						// note: if readyTopublish is checked first, will not get to this!
