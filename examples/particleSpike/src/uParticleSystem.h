@@ -21,9 +21,7 @@ sdds_enum(nominal, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) 
 sdds_enum(___, complete) TstartuStatus;
 
 #ifdef SDDS_PARTICLE_DEBUG
-sdds_enum(___, getValues, getTree, setDefaults) TdebugAction;
-#else
-sdds_enum(___) TdebugAction;
+sdds_enum(___, getValues, getTree, getCommandLog, setVars, setDefaults) TdebugAction;
 #endif
 
 /**
@@ -106,7 +104,11 @@ class TparticleSystem : public TmenuHandle {
         };
         sdds_var(Tpublishing,publishing)
         sdds_var(TsystemAction,action) // take a system action
+
+        #ifdef SDDS_PARTICLE_DEBUG
         sdds_var(TdebugAction,debug) // debug actions
+        sdds_var(Tstring,command) // debug actions
+        #endif
 
 	private:
 		
@@ -139,6 +141,9 @@ class TparticleSystem : public TmenuHandle {
 
 			// system setup
 			on(sdds::setup()){
+                // device should always operate in UTC (web-app will translate)
+                Time.zone(0);
+
 				// start hardware watchdog - i.e. how long are individual operations in the application thread allowed to take before the system resets?
 				Watchdog.init(WatchdogConfiguration().timeout(1min));
 				Watchdog.start();
@@ -257,7 +262,7 @@ class TparticleSystem : public TmenuHandle {
                 // update time sdds_var
                 if (Time.isValid() && Time.now() > FlastNow) {
                     FlastNow = Time.now();
-                    vitals.time = Time.format(FlastNow, "%Y-%m-%d %H:%M:%S %Z");
+                    vitals.time = Time.format(FlastNow, TIME_FORMAT_ISO8601_FULL); //"%Y-%m-%d %H:%M:%S %Z");
                 }
 
                 // trigger name handler

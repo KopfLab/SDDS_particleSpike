@@ -89,6 +89,10 @@ class TparticleSpike{
 				inline static const char* FburstUnitsKey = "u";
 				inline static const char* FburstSnapshotKey = "snap";
 
+				// keys for var command log
+				inline static const char* FvarLogTimeBaseKey = "tb";
+				inline static const char* FvarLogCmdsLogKey = "l";
+
 				// base64 charset
 				inline static const char base64_chars[] =
 					"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -370,7 +374,65 @@ class TparticleSpike{
 					return(burst);
 				}
 
-				
+				/**
+				 * @brief serialize a command with it's return code and message
+				 * @todo do we need a version with keys here? probably fine as array
+				 */
+				static Variant serializeCommand(system_tick_t _time, const String& _cmd, int _code, const char* _msg) {
+					Variant var;
+					var.append(_time);
+					var.append(_cmd);
+					var.append(_code);
+					//var.append(_msg);
+					return(var);
+				}
+
+				/**
+				 * @brief serialize command log
+				 * @param _refTime the time base of all the commands in the provided log
+				 * @param _timeShift how much to shift ("time rebase") the logs in addition
+				 */
+				static Variant serializeCommandLog(system_tick_t _refTime, system_tick_t _timeShift, const Variant& _log) {
+					// rebase the logs
+					Variant rebasedLog;
+					if (_log.isArray()) {						
+						for (size_t i = 0; i < _log.size(); ++i) {
+							Variant entry = _log.at(i);
+							if (_timeShift > 0 && entry.isArray() && !entry.isEmpty()) {
+								// shift time
+								system_tick_t offset = entry[0].toUInt();
+								entry.removeAt(0);
+								if (offset > _timeShift)
+									entry.prepend(offset - _timeShift);
+								else
+									entry.prepend(0);
+							}
+							rebasedLog.append(entry);
+						}
+					}
+
+					// whole log
+					Variant var;
+					
+					// time base (if valid time, otherwise NULL)
+					if (Time.isValid()) {
+						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float32>(millis() - _refTime - _timeShift)/1000));
+						var.set(FvarLogTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
+					} else {
+						var.set(FvarLogTimeBaseKey, Variant());
+					}
+					var.set(FvarLogCmdsLogKey, rebasedLog);
+					return(var);
+				}
+
+				/**
+				 * @brief get logs back out of string
+				 */
+				static Variant deserializeCommandLog(const char* _logString) {
+					return Variant::fromJSON(_logString).get(FvarLogCmdsLogKey);
+				}
+
+
 				/**
 				 * @brief get the path of the descriptor variable
 				 */
@@ -545,18 +607,6 @@ class TparticleSpike{
 				}
 			}
 
-			// release channel
-			bool releaseChannel(char _c) {
-				int channel = TparticleSerializer::decodeIntFromBase64(_c);
-				if (channel < 0 || channel > (N_CHANNELS - 1)) {
-					Log.error("invalid channel '%c'", _c);
-					return false;
-				}
-				Log.trace("releasing channel '%c' (idx %d)", _c, channel);
-				Fchannels[channel].release();
-				return true;
-			}
-
 			// queue a message
 			String queue(const String& _response) {
 				// any message
@@ -595,12 +645,11 @@ class TparticleSpike{
 					channel = (oldestFreeLastUsed > 0) ? oldestFreeChannel : oldestInUseChannel;
 				}
 				// assign to channel and return initial message
-				// format: base64 channel ID, base64 remaining transmissions, actual data
+				// format: base64 channel ID + base64 remaining transmissions + actual data
 				size_t remaining = Fchannels[channel].assign(_response.substring(INITIAL_SIZE));
 				String initial = String(TparticleSerializer::encodeIntToBase64(channel)) + 
 					String(TparticleSerializer::encodeIntToBase64(remaining)) + 
 					_response.substring(0, INITIAL_SIZE);
-				Log.trace("INITIAL (with %d remaining in channel %d):", remaining, channel);
 				return initial;
 			}
 
@@ -1063,7 +1112,6 @@ class TparticleSpike{
 					}
 					// opts filter and dtypes filter didn't throw us out --> set interval to the provided default
 					pvw->Fvalue = _default;
-					Log.trace("SETTING %s interval to %d", d->name(), pvw->Fvalue);
 				}
 			}
 		}
@@ -1191,21 +1239,98 @@ class TparticleSpike{
 		Ttimer FglobalPublishTimer;
 
 		// error codes
-		constexpr static int ERR_INV_CH = -200;
+		constexpr static int ERR_NO_CMD = -200;
+		constexpr static int ERR_CMDS_MAX = -201;
 
+		// command log
+		system_tick_t FcmdLogMinTime = 0; // earliest time in the log
+		char FcmdLog[particle::protocol::MAX_FUNCTION_ARG_LENGTH] = "[]\0";
+
+		void logCommand(system_tick_t _time, const String& _cmd, int _errCode, const char* _errText) {
+			// append to sddslog cloud var Variant array
+			Variant cmd_log = TparticleSerializer::deserializeCommandLog(FcmdLog);
+			Variant new_cmd = TparticleSerializer::serializeCommand(_time - FcmdLogMinTime, _cmd, _errCode, _errText);
+			cmd_log.append(new_cmd);
+			size_t msg_log_size = cmd_log.toJSON().length(); // reserve 40 chars for timebase
+			while (msg_log_size  >= (particle::protocol::MAX_FUNCTION_ARG_LENGTH - 40) && !cmd_log.isEmpty()) {
+				// remove the oldest entries until they fit
+				cmd_log.removeAt(0);
+				msg_log_size = cmd_log.toJSON().length();
+			}
+			// time offset
+			if (!cmd_log.isEmpty()) {
+				// store back in the cloud log particle variable
+				system_tick_t timeRebaseShift = 0;
+				if (cmd_log[0].isArray() && !cmd_log[0].isEmpty()) {
+					// rebased based on first entry if there is one
+					timeRebaseShift = cmd_log[0][0].toUInt();
+				}
+				Variant log = TparticleSerializer::serializeCommandLog(FcmdLogMinTime, timeRebaseShift, cmd_log);
+				snprintf(FcmdLog, particle::protocol::MAX_FUNCTION_ARG_LENGTH, "%s", log.toJSON().c_str());
+				FcmdLogMinTime = FcmdLogMinTime + timeRebaseShift;
+			} else {
+				// nothing to store
+				FcmdLogMinTime = 0;
+				snprintf(FcmdLog, particle::protocol::MAX_FUNCTION_ARG_LENGTH, "[]");
+			}
+		}
+		
 		/**
 		 * @brief Particle.function sddsSetVariables
 		 */
 		int setVariables(String _cmd){
-			// FIXME: split _cmd and process each command in it individually
-			// FIXME: return a negative (-) bitwise addition of whether each command
-			// succeeded or failed (Q: is that enough? limits to 31 commands at once but since the yhave to fit into a 1024 char that should suffice)
-			// i.e. return 0 if all succeeded
-			// store each command along with the time base, offset, command text, return code (and error description if there is one) in sddsCmdLog (latest however many fit into it)
-			// --> retrießve with the getCommandLog call, doesn't have to be a call, could also just be a fixed variable
-			Fpch.resetLastError();
-			Fpch.handleMessage(_cmd);
-			return -TplainCommHandler::Terror::toInt(Fpch.lastError());
+			// parse _cmds into individual commands
+			std::vector<String> cmds;
+			system_tick_t timestamp = millis();
+  			size_t start = 0;
+			for (size_t i = 0; i < _cmd.length(); ++i) {
+				char c = _cmd[i];
+				if (c == ' ') {
+					if (start == i) {
+						// nope, we're still at the start, skip the whitespace
+						start = i + 1;
+						continue;
+					} else {
+						// finished a command
+						cmds.push_back(_cmd.substring(start, i));
+						start = i + 1;
+					}
+				}
+			}
+			// any leftover to add?
+			if (start < _cmd.length()) {
+				cmds.push_back(_cmd.substring(start, _cmd.length()));
+			}
+
+			// got anything?
+			if (cmds.empty()) return(ERR_NO_CMD);
+
+			// got too many?
+			// cannot store the true/false return values for more
+			// than 31 commands in the 32-bit int return value
+			if (cmds.size() > 31) return(ERR_CMDS_MAX);
+
+			// process commands
+			int returnValue = 0;
+			for (size_t i = 0; i < cmds.size(); ++i) {
+				Fpch.resetLastError();
+				Fpch.handleMessage(cmds[i]);
+				if (Fpch.lastError() == plainComm::Terror::e::___) {
+					// success
+					logCommand(timestamp, cmds[i], 0, "");
+				} else {
+					// fail
+					returnValue |= (1<<i);
+					logCommand(timestamp, cmds[i], 
+						plainComm::Terror::toInt(Fpch.lastError()), 
+						plainComm::Terror::c_str(Fpch.lastError()));
+					if (cmds.size() == 1) {
+						// single command --> return its code as negative
+						return -plainComm::Terror::toInt(Fpch.lastError());
+					}
+				}
+			}
+			return returnValue;
 		}
 
 		/**
@@ -1221,14 +1346,6 @@ class TparticleSpike{
 		String getValues() {
 			Variant values = TparticleSerializer::serializeValuesOnly(Froot);
 			return FvarResp.queue(values.toJSON());
-		}
-
-		/**
-		 * @brief Particel variable sddsGetCommandLog
-		 */
-		String getCommandLog() {
-
-			return "";
 		}
 
 		#pragma endregion
@@ -1295,8 +1412,7 @@ class TparticleSpike{
 
 			// publish timer triggers
 			on(FglobalPublishTimer) {
-				Log.trace("*** GLOBAL PUBLISH TIMER ***");
-				publishGlobal(); // variables reset themselves
+				publishGlobal(); // variables reset themselves after publish
 				FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
 			};
 
@@ -1338,6 +1454,10 @@ class TparticleSpike{
 					//Log.trace("\nCBOR in base64 (size %d): ", base64.length());
 					//Log.print(base64);
 					//Log.print("\n");
+				} else if (sddsParticleSystem.debug == TdebugAction::e::setVars) {
+					Log.trace("*** SET VARS: %s ***", sddsParticleSystem.command.c_str());
+					Log.trace("retval: %d", setVariables(String(sddsParticleSystem.command.c_str())));
+					Log.print("\n");
 				} else if (sddsParticleSystem.debug == TdebugAction::e::setDefaults) {
 					setupDefaults(
 						{
@@ -1345,6 +1465,11 @@ class TparticleSpike{
             				{publish::GLOBAL, {sdds::Ttype::FLOAT32}}
 						}
 					);
+				}
+				if (sddsParticleSystem.debug == TdebugAction::e::getCommandLog || sddsParticleSystem.debug == TdebugAction::e::setVars) {
+					Log.trace("*** CMD LOG ***");
+					Log.print(FcmdLog);
+					Log.print("\n");
 				}
 				if (sddsParticleSystem.debug != TdebugAction::e::___) {
 					sddsParticleSystem.debug = TdebugAction::e::___;
@@ -1421,7 +1546,7 @@ class TparticleSpike{
 
 			// particle functions to set variable and variable for logs
 			Particle.function("sddsSetVariables", &TparticleSpike::setVariables,this);
-			Particle.variable("sddsGetCommandLog", [this](){ return this->getCommandLog(); });
+			Particle.variable("sddsGetCommandLog", FcmdLog);
 		}
 
 		#pragma endregion
