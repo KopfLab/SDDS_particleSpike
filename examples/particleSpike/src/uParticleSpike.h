@@ -205,6 +205,9 @@ class TparticleSpike{
 					} else if (dt == sdds::Ttype::FLOAT32) {
 						Tfloat32 *val = static_cast<Tfloat32 *>(_d);
 						if (!val->isNan()) return Variant(val->value());
+					} else if (dt == sdds::Ttype::FLOAT64) {
+						Tfloat64 *val = static_cast<Tfloat64 *>(_d);
+						if (!val->isNan()) return Variant(val->value());
 					} else if (dt == sdds::Ttype::ENUM && !_enumAsText) {
 						dtypes::uint8* value = static_cast<dtypes::uint8*>(static_cast<TenumBase*> (_d)->pValue());
 						return Variant(*value);
@@ -301,7 +304,7 @@ class TparticleSpike{
 				/**
 				 * @brief serialize data for transmission in data bursts
 				 */
-				static Variant serializeData(dtypes::uint32 _n, dtypes::float32 _value, dtypes::float32 _sdev, Tdescr* _unit = nullptr) {
+				static Variant serializeData(dtypes::uint32 _n, dtypes::float64 _value, dtypes::float64 _sdev, Tdescr* _unit = nullptr) {
 					Variant data;
 					data.set(FburstNumValueKey, _value);
 					data.set(FburstNumCountKey, _n);
@@ -358,7 +361,7 @@ class TparticleSpike{
 
 					// time base (if valid time, otherwise NULL and the offset is machine time in millis)
 					if (Time.isValid()) {
-						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float32>(millis() - _refTime)/1000));
+						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float64>(millis() - _refTime)/1000));
 						burst.set(FburstTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
 					} else {
 						// note: if readyTopublish is checked first, will not get to this!
@@ -416,7 +419,7 @@ class TparticleSpike{
 					
 					// time base (if valid time, otherwise NULL)
 					if (Time.isValid()) {
-						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float32>(millis() - _refTime - _timeShift)/1000));
+						time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float64>(millis() - _refTime - _timeShift)/1000));
 						var.set(FvarLogTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
 					} else {
 						var.set(FvarLogTimeBaseKey, Variant());
@@ -970,33 +973,33 @@ class TparticleSpike{
 			private:
 				// running stats for value averaging
 				dtypes::uint32 FsumCnt = 0;
-				dtypes::float32 Favg = 0;
-				dtypes::float32 Fm2 = 0;
-				dtypes::float32 Ftime = 0;
+				dtypes::float64 Favg = 0;
+				dtypes::float64 Fm2 = 0;
+				dtypes::float64 Ftime = 0;
 			
-				void add(dtypes::float32 x) {
+				void add(dtypes::float64 x) {
 					FsumCnt++;
 					if (FsumCnt > 1) {
 						// value
-						dtypes::float32 delta = x - Favg;
+						dtypes::float64 delta = x - Favg;
 						Favg += delta / FsumCnt;
 						Fm2 += delta * (x - Favg);
 						// time
-						delta = static_cast<dtypes::float32>(millis()) - Ftime;
+						delta = static_cast<dtypes::float64>(millis()) - Ftime;
 						Ftime += delta / FsumCnt;
 					} else {
 						// n = 1
 						Favg = x;
-						Ftime = static_cast<dtypes::float32>(millis());
+						Ftime = static_cast<dtypes::float64>(millis());
 					}
 				}
 
-				dtypes::float32 variance() {
+				dtypes::float64 variance() {
 					// variance implemented based on Welford's algorithm
-					return ( (FsumCnt > 1) ? Fm2 / (FsumCnt - 1) : std::numeric_limits<dtypes::float32>::quiet_NaN());
+					return ( (FsumCnt > 1) ? Fm2 / (FsumCnt - 1) : std::numeric_limits<dtypes::float64>::quiet_NaN());
 				}
 
-				dtypes::float32 stdDev() {
+				dtypes::float64 stdDev() {
 					return sqrt(variance());
 				}
 
@@ -1011,7 +1014,7 @@ class TparticleSpike{
 				}
 
 				void changeValue() override{
-					add(static_cast<dtypes::float32>(typedVoi()->Fvalue));
+					add(static_cast<dtypes::float64>(typedVoi()->Fvalue));
 				}
 
 				system_tick_t getTimeForPublish() override {
@@ -1057,6 +1060,8 @@ class TparticleSpike{
 					_dst->addDescr(new TparticleAveragingVarWrapper<Tint32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::FLOAT32)
 					_dst->addDescr(new TparticleAveragingVarWrapper<Tfloat32>(d, &Fpublisher, linkedUnit));
+				else if (dt == sdds::Ttype::FLOAT64)
+					_dst->addDescr(new TparticleAveragingVarWrapper<Tfloat64>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::STRUCT){
 					// recursive structure
 					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
@@ -1462,7 +1467,7 @@ class TparticleSpike{
 					setupDefaults(
 						{
 							{publish::ALWAYS, sdds::opt::saveval},
-            				{publish::GLOBAL, {sdds::Ttype::FLOAT32}}
+            				{publish::GLOBAL, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}}
 						}
 					);
 				}
