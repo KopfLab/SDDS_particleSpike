@@ -154,8 +154,8 @@ task :compile do
   # info
   puts "\nINFO: compiling '#{program}' #{local ? 'locally' : 'in the cloud'} for #{platform} #{version}"
   puts " - src path: #{src_path}"
-  puts " - lib paths: #{lib_paths.join(' ')}" if lib_paths
-  puts " - aux files: #{aux_files.join(' ') }" if aux_files
+  puts " - lib paths: #{lib_paths.join(' ')}" if lib_paths && lib_paths.is_a?(Array)
+  puts " - aux files: #{aux_files.join(' ') }" if aux_files && aux_files.is_a?(Array)
   puts "\n"
   
   # compile locally
