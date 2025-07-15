@@ -71,7 +71,7 @@ jobs:
           echo "Including sources from ${{ steps.vars.outputs.program_src }}"
           mv ${{ steps.vars.outputs.program_src }}/* ${{ inputs.program }} 
           if [ -f "${{ steps.vars.outputs.program_src }}/../project.properties" ]; then
-            echo "Including project.properties froom parent directory of ${{ steps.vars.outputs.program_src }}"
+            echo "Including project.properties from parent directory of ${{ steps.vars.outputs.program_src }}"
             mv ${{ steps.vars.outputs.program_src }}/../project.properties ${{ inputs.program }}
           fi
           echo "Including libraries:"
@@ -88,8 +88,13 @@ jobs:
           done
           echo "Including auxiliary resources:"
           for aux in ${{ inputs.aux }}; do
-            echo " - $aux"
-            mv $aux ${{ inputs.program }}
+            if [ -d "$aux" ]; then
+              echo " - $aux/*"
+              mv $aux/* ${{ inputs.program }}
+            else
+              echo " - $aux"
+              mv $aux ${{ inputs.program }}
+            fi
           done
 
       - name: Compile in cloud (on master)
