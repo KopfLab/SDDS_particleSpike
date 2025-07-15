@@ -5,7 +5,6 @@
 #include "uTypedef.h"
 #include "uCoreEnums.h"
 #include "uMultask.h"
-#include "uParticleSpike.h"
 
 // example LED menu handle
 class Tled : public TmenuHandle{
@@ -18,9 +17,7 @@ class Tled : public TmenuHandle{
         sdds_var(TonOff,blinkSwitch,sdds::opt::saveval)
         sdds_var(Tuint16,onTime,sdds::opt::saveval,500)
         sdds_var(Tuint16,offTime,sdds::opt::saveval,500)
-        sdds_var(Tfloat64,meas)
-        sdds_var(Tstring,unit,sdds::opt::saveval,"mM")
-        
+
         Tled(){
             pinMode(LED_BUILTIN, OUTPUT);
 
@@ -57,7 +54,7 @@ class TuserStruct : public TmenuHandle{
 
 // serial spike for communication via serial
 #include "uSerialSpike.h"
-TserialSpike serialHandler(userStruct, 115200);
+TserialSpike serialSpike(userStruct, 115200);
 
 // log handler
 SerialLogHandler logHandler(LOG_LEVEL_INFO, { // Logging level for non-application messages

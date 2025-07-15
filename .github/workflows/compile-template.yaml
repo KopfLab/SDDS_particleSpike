@@ -1,15 +1,15 @@
 # name of the job
-name: Compile LED example
+name: Compile template
 
 # specify which paths to watch for changes
 on:
   push:
     paths:
-      - examples/led
+      - examples/template
       - lib/SDDS/src
       - src
       - .github/workflows/compile.yaml
-      - .github/workflows/compile-led.yaml
+      - .github/workflows/compile-template.yaml
 
 # run compile via the compile.yaml
 jobs:
@@ -19,14 +19,12 @@ jobs:
       matrix:
         # CHANGE program and specify lib/aux and non-default src as needed
         program:
-          - name: 'led'
+          - name: 'template'
             lib: 'SDDS'
             aux: 'src'
         # CHANGE platforms as needed
         platform: 
           - {name: 'p2', version: '6.3.2'}
-          - {name: 'boron', version: '6.3.2'}
-          - {name: 'msom', version: '6.3.2'}
 
     # program name
     name: ${{ matrix.program.name }}-${{ matrix.platform.name }}-${{ matrix.platform.version }}

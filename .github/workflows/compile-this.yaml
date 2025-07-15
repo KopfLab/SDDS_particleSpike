@@ -1,14 +1,13 @@
 # name of the job
-name: Compile SDDS particleSpike test
+name: Compile project
 
 # specify which paths to watch for changes
 on:
   push:
     paths:
-      - examples/particleSpike
-      - lib/SDDS
+      - src
       - .github/workflows/compile.yaml
-      - .github/workflows/compile-cloudLed.yaml
+      - .github/workflows/compile-this.yaml
 
 # run compile via the compile.yaml
 jobs:
@@ -18,9 +17,10 @@ jobs:
       matrix:
         # CHANGE program and specify lib/aux and non-default src as needed
         program:
-          - name: 'particleSpike'
+          - name: 'MYPROJECT'
+            src: 'src'
             lib: 'SDDS'
-            aux: 'src'
+            aux: 'examples/template/src/main.cpp'
         # CHANGE platforms as needed
         platform: 
           - {name: 'p2', version: '6.3.2'}

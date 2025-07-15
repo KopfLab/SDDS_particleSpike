@@ -70,6 +70,10 @@ jobs:
           mkdir ${{ inputs.program }}
           echo "Including sources from ${{ steps.vars.outputs.program_src }}"
           mv ${{ steps.vars.outputs.program_src }}/* ${{ inputs.program }} 
+          if [ -z "${{ steps.vars.outputs.program_src }}/../project.properties" ]; then
+            echo "Including project.properties froom parent directory of ${{ steps.vars.outputs.program_src }}"
+            mv ${{ steps.vars.outputs.program_src }}/../project.properties ${{ inputs.program }}
+          fi
           echo "Including libraries:"
           for lib in ${{ inputs.lib }}; do
             if [ -d "$lib${{ inputs.lib_sub_folder }}" ]; then
