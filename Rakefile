@@ -16,7 +16,7 @@
 task :led => :compile
 task :cloudLed => :compile
 
-desc "compile particleSpike examplie"
+desc "compile particleSpike example"
 task :particleSpike => :compile
 
 ### SETUP ###
@@ -24,6 +24,7 @@ task :particleSpike => :compile
 # setup
 require 'fileutils'
 require 'yaml'
+require 'digest'
 
 # recommended versions
 # see https://docs.particle.io/reference/product-lifecycle/long-term-support-lts-releases/
@@ -35,10 +36,10 @@ versions = {
 }
 
 # constants
-examples_folder = "examples/"
-lib_folder = "lib/"
-bin_folder = "bin/"
-src_folder = "/src"
+examples_folder = "examples"
+lib_folder = "lib"
+bin_folder = "bin"
+src_folder = "src"
 local_folder = "local"
 
 # parameters
@@ -49,15 +50,24 @@ bin = ENV['BIN']
 
 ### COMPILE ###
 
-desc "compile binary in the cloud"
+desc "compile binary in the cloud (default) or locally"
 task :compile do
+  # check for local compile
+  local = Rake.application.top_level_tasks.first == "local"
   # what program are we compiling?
-  program = ENV['PROGRAM'] || Rake.application.top_level_tasks.first
+  if local
+    if Rake.application.top_level_tasks.length < 2
+      raise "Error: compiling locally but no second task"
+    end
+    program = ENV['PROGRAM'] || Rake.application.top_level_tasks[1]
+  else
+    program = ENV['PROGRAM'] || Rake.application.top_level_tasks.first
+  end
+  
+  # safety checks
   if program == "default"
     next
   end
-
-  # safety checks
   if platform.nil? || platform.strip.empty?
     raise "Error: PLATFORM must not be empty."
   end
@@ -69,7 +79,7 @@ task :compile do
   workflow_path = File.join(".github", "workflows", "compile-#{program}.yaml")
   unless File.exist?(workflow_path)
     warn "Workflow YAML config file (#{workflow_path}) not found, compiling just from examples folder: "
-    src_path = "#{examples_folder}#{program}#{src_folder}"
+    src_path = "#{examples_folder}/#{program}/#{src_folder}"
     lib_path = ""
     aux_files = ""
   else
@@ -79,7 +89,7 @@ task :compile do
     lib_path = paths["lib"]
     aux_files = paths["aux"]
     if src_path.nil? || src_path.strip.empty?
-      src_path = "#{examples_folder}#{program}#{src_folder}"
+      src_path = "#{examples_folder}/#{program}/#{src_folder}"
     end 
   end
   
@@ -87,11 +97,15 @@ task :compile do
   unless Dir.exist?(src_path)
     raise "Error: folder '#{src_path}' does not exist."
   end
-  src_files = Dir.glob("#{src_path}/**/*.{h,c,cpp,properties}").join(' ')
+  src_files = Dir.glob("#{src_path}/**/*.{h,c,cpp,properties}")
+  all_files = src_files
+  dest_files = src_files.map { 
+    |path| File.join(local_folder, src_folder, File.basename(path)) 
+  }
 
   # libs
   unless lib_path.nil? || lib_path.strip.empty?
-    paths = lib_path.strip.split(/\s+/).map do |path|
+    lib_paths = lib_path.strip.split(/\s+/).map do |path|
       if Dir.exist?(File.join(path, src_folder)) 
         File.join(path, src_folder)
       elsif Dir.exists?(File.join(lib_folder, path, src_folder)) 
@@ -100,34 +114,79 @@ task :compile do
         raise "Could not find '#{path}' library in root or #{lib_folder} - make sure it exists"
       end
     end.compact
-    lib_path = paths.join(' ')
-    lib_files = paths.map do |path|
-      Dir.glob("#{path}/**/*.{h,c,cpp}").join(' ')
-    end
-    lib_files = " " + lib_files.join(' ')
+    lib_files = lib_paths.map { |path|
+      Dir.glob("#{path}/**/*.{h,c,cpp}") 
+    }.flatten
+    all_files = all_files + lib_files
+    dest_files = dest_files + lib_files.map {
+      |path| File.join(local_folder, lib_folder, path.gsub("lib/", ""))
+    }
   end
 
   # aux files
   unless aux_files.nil? || aux_files.strip.empty?
-    aux_files = " " + aux_files
+    all_files = all_files + aux_files
+    dest_files = dest_files + aux_files.map { 
+      |path| File.join(local_folder, src_folder, File.basename(path)) 
+    }
   end
 
   # info
-  puts "\nINFO: compiling '#{program}' in the cloud for #{platform} #{version}"
+  puts "\nINFO: compiling '#{program}' #{local ? 'locally' : 'in the cloud'} for #{platform} #{version}"
   puts " - src path: #{src_path}"
-  puts " - lib paths: #{lib_path}"
-  puts " - aux files: #{aux_files}"
+  puts " - lib paths: #{lib_paths.join(' ')}" if lib_paths
+  puts " - aux files: #{aux_files.join(' ') }" if aux_files
   puts "\n"
   
-  # compile
-  sh "particle compile #{platform} #{src_files}#{lib_files}#{aux_files} --target #{version} --saveTo #{bin_folder}#{program}-#{platform}-#{version}.bin", verbose: false
+  # compile locally
+  if local
+    puts "INFO: setting up '#{local_folder}' folder for compiling"
+    if all_files.length != dest_files.length
+      raise "Error: incompatible number of source and dest files"
+    end
+    existing_files = Dir.glob(["#{local_folder}/src/**/*", "#{local_folder}/lib/**/*"]).select { |f| File.file?(f) }
+    # sync files
+    all_files.zip(dest_files).each do |source_path,target_path|
+      if File.exist?(target_path)
+        # Compare checksums
+        source_digest = Digest::SHA256.file(source_path).hexdigest
+        target_digest = Digest::SHA256.file(target_path).hexdigest
+
+        if source_digest != target_digest
+          puts " - updating: #{target_path}"
+          FileUtils.cp(source_path, target_path)
+        end
+      else
+        puts " - adding: #{target_path}"
+        unless Dir.exists?(File.dirname(target_path))
+          FileUtils.mkdir_p(File.dirname(target_path))
+        end
+        FileUtils.cp(source_path, target_path)
+      end
+    end
+    # remove redundant files
+    redundant_files = existing_files - dest_files
+    redundant_files.each do |path| 
+      puts " - removing: #{path}"
+      FileUtils.rm_rf(path)
+    end
+    puts "\nINFO: '#{local_folder}' folder is ready"
+    ENV['MAKE_LOCAL_PROGRAM'] = program
+    Rake::Task[:compileLocal].invoke
+  else
+    # compile in cloud
+    sh "particle compile #{platform} #{all_files.join(' ')} --target #{version} --saveTo #{bin_folder}/#{program}-#{platform}-#{version}-cloud.bin", verbose: false
+  end
+end
+
+desc "flag compile to be done locally (rake local MYPROG)"
+task :local do
+   if Rake.application.top_level_tasks.length < 2
+      raise "Error: compiling locally but no second task provided"
+    end
 end
 
 ### LOCAL COMPILE ###
-# todo: implement an :initLocal that takes the ENV['PROGRAM'] to reset the local/ folder
-# (see code for this in the Guardfile), and also stores the code base information (i.e. the program name to parse the workflows file) in the local/ folder
-# then guardfile for local just looks at the codebase in local and watches the corresponding files
-# to refresh
 
 desc "compiles the program in local/ with the local toolchain"
 task :compileLocal do
@@ -135,7 +194,7 @@ task :compileLocal do
   Rake::Task[:makeLocal].invoke
 end
 
-desc "clean the program in local/"
+desc "cleans the program in local/"
 task :cleanLocal do
   ENV['MAKE_LOCAL_TARGET'] = "clean-user"
   Rake::Task[:makeLocal].invoke
@@ -147,8 +206,9 @@ desc "runs local toolchain make target"
 task :makeLocal do
   # what program are we compiling?
   target = ENV['MAKE_LOCAL_TARGET']
+  program = ENV['MAKE_LOCAL_PROGRAM'] || "local"
   # info
-  puts "\nINFO: making '#{target}' in folder '#{local_folder}' for #{platform} #{version} with local toolchain"
+  puts "\nINFO: making '#{target}' in folder '#{local_folder}' for #{program} #{platform} #{version} with local toolchain"
 
   # local folder
   local_root = File.expand_path(File.dirname(__FILE__)) + "/" + local_folder
@@ -194,21 +254,25 @@ task :makeLocal do
     abort "Command failed!" unless exit_status.success?
     output_path = "#{local_root}/target/#{platform}/#{local_folder}.bin"
     if File.exist?(output_path)
-      FileUtils.cp(output_path, "#{bin_folder}/local-#{platform}-#{version}.bin")
+      bin_path = "#{bin_folder}/#{program}-#{platform}-#{version}-local.bin"
+      puts "INFO: saving bin in #{bin_path}"
+      FileUtils.cp(output_path, bin_path)
     end
   end
 end
 
 ### AUTO-COMPILE ###
 
-desc "start automatic recompile of latest program in cloud"
-task :guardCloud do
-  sh "bundle exec guard -g cloud"
+desc "start automatic recompile of latest program"
+task :autoCompile do
+  if Rake.application.top_level_tasks.include?("autoFlash")
+    ENV['FLASH'] = 'true'
+  end
+  sh "bundle exec guard"
 end
 
-desc "start automatic recompile of latest program locally"
-task :guardLocal do
-  sh "bundle exec guard -g local"
+desc "automatic recompile with flash vis USB, use with autoCompile"
+task :autoFlash do
 end
 
 ### FLASH ###
@@ -219,10 +283,10 @@ task :flash do
   # is a binary selected?
   unless bin.nil? || bin.strip.empty?
     # user provided
-    bin_path = "#{bin_folder}#{bin}"
+    bin_path = "#{bin_folder}/#{bin}"
   else
     # find latest
-    files = Dir.glob("#{bin_folder}*.bin").select { |f| File.file?(f) }
+    files = Dir.glob("#{bin_folder}/*.bin").select { |f| File.file?(f) }
     if files.empty?
       raise "No .bin files found in #{bin_folder}"
     end
@@ -322,42 +386,4 @@ desc "flash the tinker app"
 task :tinker do
   puts "\nINFO: flashing tinker..."
   sh "particle flash --usb tinker"
-end
-
-desc "used by Guardfile to automatically re-compile binaries on code changes"
-task :autoCompile, [:program, :platform, :version, :paths] do |t, args|
-  puts "\n**** RE-COMPILE AUTOMATICALLY ****"
-  puts "program: #{args.program}"
-  puts "platform: #{args.platform} #{args.version}"
-  puts "modified files:"
-  args.paths.each do |path|
-    puts " - #{path}"
-  end
-  sh "bundle exec rake compile PROGRAM=#{args.program} PLATFORM=#{args.platform} VERSION=#{args.version}", verbose: false
-  puts "**** RE-COMPILE COMPLETE ****"
-end
-
-### UML ###
-# to install:
-# docker pull plantuml/plantuml-server:jetty
-# docker run -d -p 8080:8080 plantuml/plantuml-server:jetty
-uml_docker = "plantuml/plantuml-server:jetty"
-
-desc "pull the docker image for plantuml"
-task :umlInstall do
-  puts "\nINFO: pulling/updating plantuml docker image ..."
-  sh "docker pull #{uml_docker}"
-end
-
-desc "start the docker container for plantuml"
-task :umlStart do
-  puts "\nINFO: starting plantUML server..."
-  sh "docker run -d -p 8080:8080 #{uml_docker}"
-  puts "set your PlantUML server url settings to http://localhost:8080/ or go to http://localhost:8080/ to generate UML diagrams"
-end
-
-desc "stop the docker container for plantuml"
-task :umlStop do
-  puts "\nINFO: stopping plantUML server..."
-  sh "docker stop $(docker ps -f \"ancestor=#{uml_docker}\" --format \"{{.ID}}\")"
 end
