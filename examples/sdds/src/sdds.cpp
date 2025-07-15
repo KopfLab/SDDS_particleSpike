@@ -53,7 +53,7 @@ class TuserStruct : public TmenuHandle{
 } userStruct;
 
 #include "uSerialSpike.h"
-TserialSpike serialHandler(userStruct,115200);
+TserialSpike serialSpike(userStruct,115200);
 
 void setup(){
 
