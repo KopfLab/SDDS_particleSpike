@@ -1482,6 +1482,8 @@ class TparticleSpike{
 			};
 			#endif
 		}
+		TparticleSpike(TmenuHandle& _root, const dtypes::string& _type, dtypes::uint16 _version): TparticleSpike(_root, _type, _version, "") {
+		}
 
 		/**
 		 * @brief call during setup() to initialize the SYSTEM menu and all particle variables and functions

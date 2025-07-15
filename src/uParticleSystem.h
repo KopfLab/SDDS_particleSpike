@@ -61,7 +61,7 @@ class TparticleSystem : public TmenuHandle {
                 // random access memory (RAM, in bytes)
                 #if (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_BORON)
                 sdds_var(Tuint32,totalRAM,sdds::opt::readonly, 80 * 1024) // approximately 80 KB
-                #elif (PLATFORM_ID == PLATFORM_P2)
+                #elif (PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_MSOM)
                 sdds_var(Tuint32,totalRAM,sdds::opt::readonly, 3 * 1024 * 1024) // approximately 3 MB
                 #else
                 sdds_var(Tuint32,totalRAM,sdds::opt::readonly, 0)
@@ -70,7 +70,10 @@ class TparticleSystem : public TmenuHandle {
 
                 // flash memory (in bytes) / number of sectors
                 inline static const size_t flashSectorSize = 4 * 1024; // 4 KB
-                #if (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
+                #if (PLATFORM_ID == PLATFORM_MSOM)
+                sdds_var(Tuint32,totalFlash,sdds::opt::readonly, 8 * 1024 * 1024) // 8 MB
+                sdds_var(Tuint32,totalSectors,sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize)
+                #elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
                 sdds_var(Tuint32,totalFlash,sdds::opt::readonly, 2 * 1024 * 1024) // 2 MB
                 sdds_var(Tuint32,totalSectors,sdds::opt::readonly, 2 * 1024 * 1024 / flashSectorSize)
                 #else
@@ -120,7 +123,7 @@ class TparticleSystem : public TmenuHandle {
 
 		// platform check-in timer
 		const system_tick_t FcheckInterval = 100; // ms
-		Ttimer FpublishCheckTimer;
+		Ttimer FsystemCheckTimer;
 
         // time sync timer
         const system_tick_t FtimeSyncInterval = 1000 * 60 * 60 * 6; // every 6 hours should suffice
@@ -131,9 +134,7 @@ class TparticleSystem : public TmenuHandle {
         bool FrequestName = true;
 
         // time stamp for the clock update
-        time32_t FlastNow = 0;
-
-       
+        time32_t FlastNow = 0;   
 
 	public:
 
@@ -165,6 +166,10 @@ class TparticleSystem : public TmenuHandle {
 
 				// connect to the cloud (ties up the system thread)
 				Particle.connect();
+
+                // start system timers
+                FsystemCheckTimer.start(FcheckInterval);
+                FsyncTimer.start(FtimeSyncInterval);
 			};
 
 			// system actions
@@ -208,30 +213,30 @@ class TparticleSystem : public TmenuHandle {
             };
 
 			// system check in
-			FpublishCheckTimer.start(FcheckInterval);
-			on(FpublishCheckTimer) {
+			on(FsystemCheckTimer) {
 				// refresh the hardware watchdog
 				Watchdog.refresh(); 
-
+                
 				// check if memory changed
 				if (vitals.freeRAM != System.freeMemory()) {
 					vitals.freeRAM = System.freeMemory();
 					if (vitals.freeRAM < memoryRestartLimit) {
 						// not enough free memory to keep operating safely
                         // FIXME: should there be some sort of data dump of the queuedData first?
+                        // probably good to put it onto the flash drive
 						System.reset(static_cast<uint8_t>(TresetStatus::e::outOfMemory));
 					}
 				}
-
+                
                 // check if connection status changed
 				if (internet == TinternetStatus::e::connecting && Particle.connected()) {
 				    internet = TinternetStatus::e::connected;
 				} else if (internet == TinternetStatus::e::connected && !Particle.connected()) {
 				    internet = TinternetStatus::e::connecting;
 				}
-
+                
                 // check on wifi/cellular info
-                #if Wiring_WiFi
+                #if Wiring_WiFi && Wiring_WiFi == 1
                 if (WiFi.ready() && Particle.connectionInterface() == WiFi) {
                     WiFiSignal rssi = WiFi.RSSI();
                     dtypes::uint8 sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
@@ -240,11 +245,11 @@ class TparticleSystem : public TmenuHandle {
                 }
                 #endif
 
-                #if Wiring_Cellular
-                if (Cellular.ready() && Particle.connectionInterface() == Cellular) {}
+                #if Wiring_Cellular && Wiring_Cellular == 1
+                if (Cellular.ready() && Particle.connectionInterface() == Cellular) {
                     CellularSignal rssi = Cellular.RSSI();
                     dtypes::uint8 sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
-                    if (signal != sig) signal = sig;
+                    if (vitals.signal != sig) vitals.signal = sig;
                     // FIXME: what's the cellular network equivalent to SSID?
                 }
                 #endif 
@@ -272,16 +277,14 @@ class TparticleSystem : public TmenuHandle {
                 }
 
 				// check back in later
-				FpublishCheckTimer.start(FcheckInterval);
+				FsystemCheckTimer.start(FcheckInterval);
 			};
-
+            
             // time sync
-            FsyncTimer.start(FtimeSyncInterval);
             on(FsyncTimer) {
                 FresyncSysTime = true;
             };
 
-            
 		}
 
         // methods
