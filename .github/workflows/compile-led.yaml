@@ -1,5 +1,5 @@
 # name of the job
-name: Compile SDDS led test
+name: Compile LED example
 
 # specify which paths to watch for changes
 on:
@@ -7,6 +7,7 @@ on:
     paths:
       - examples/led
       - lib/SDDS
+      - src
       - .github/workflows/compile.yaml
       - .github/workflows/compile-led.yaml
 
@@ -18,13 +19,14 @@ jobs:
       matrix:
         # CHANGE program and specify lib/aux and non-default src as needed
         program:
-          - name: 'led'
+          - name: 'particleSpike'
             lib: 'SDDS'
+            aux: 'src'
         # CHANGE platforms as needed
         platform: 
           - {name: 'p2', version: '6.3.2'}
-          - {name: 'photon', version: '2.3.1'}
-          - {name: 'argon', version: '4.2.0'}
+          - {name: 'boron', version: '6.3.2'}
+          - {name: 'muon', version: '6.3.2'}
 
     # program name
     name: ${{ matrix.program.name }}-${{ matrix.platform.name }}-${{ matrix.platform.version }}

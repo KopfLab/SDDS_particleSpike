@@ -7,14 +7,11 @@
 #include "uMultask.h"
 #include "uParticleSpike.h"
 
-
 // example LED menu handle
 class Tled : public TmenuHandle{
 
     using TonOff = sdds::enums::OnOff;
-
     Ttimer timer;
-    //Ttimer dataTimer;
     public:
 
         sdds_var(TonOff,ledSwitch,sdds::opt::saveval)
@@ -54,13 +51,11 @@ class Tled : public TmenuHandle{
 // root structure
 class TuserStruct : public TmenuHandle{
     public:
-
         sdds_var(Tled,led)
-        TuserStruct(){
-        }
+        TuserStruct(){}
 } userStruct;
 
-// serial spike for output
+// serial spike for communication via serial
 #include "uSerialSpike.h"
 TserialSpike serialHandler(userStruct, 115200);
 
@@ -69,10 +64,11 @@ SerialLogHandler logHandler(LOG_LEVEL_INFO, { // Logging level for non-applicati
     { "app", LOG_LEVEL_TRACE } // Logging level for application messages (i.e. debug mode)
 });
 
+// particle spike for paritcle communication
 #include "uParticleSpike.h"
 static TparticleSpike particleSpike(
     userStruct, // self-describing data structure (SDDS)
-    "mytest",   // structure type name
+    "led",      // structure type name
     2,          // structure version
     "unit"      // auto-detect sdds vars that represent the unit of the preceeding var
 );
