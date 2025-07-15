@@ -1,0 +1,24 @@
+### UML generation ###
+# to install:
+# docker pull plantuml/plantuml-server:jetty
+# docker run -d -p 8080:8080 plantuml/plantuml-server:jetty
+uml_docker = "plantuml/plantuml-server:jetty"
+
+desc "pull the docker image for plantuml"
+task :umlInstall do
+  puts "\nINFO: pulling/updating plantuml docker image ..."
+  sh "docker pull #{uml_docker}"
+end
+
+desc "start the docker container for plantuml"
+task :umlStart do
+  puts "\nINFO: starting plantUML server..."
+  sh "docker run -d -p 8080:8080 #{uml_docker}"
+  puts "set your PlantUML server url settings to http://localhost:8080/ or go to http://localhost:8080/ to generate UML diagrams"
+end
+
+desc "stop the docker container for plantuml"
+task :umlStop do
+  puts "\nINFO: stopping plantUML server..."
+  sh "docker stop $(docker ps -f \"ancestor=#{uml_docker}\" --format \"{{.ID}}\")"
+end
