@@ -56,13 +56,9 @@ guard :shell do
         Open3.popen2e(cmd) do |stdin, stdout_and_err, wait_thr|
           stdout_and_err.each { |line| puts line }
           exit_status = wait_thr.value
-          if exit_status.success?
-            if flash
-              puts "INFO: flashing to device"
-              system("rake flash")
-            end
-          else
-            puts "\n*** COMPILE FAILED ***\n\n" 
+          if exit_status.success? && flash
+            puts "INFO: flashing to device"
+            system("rake flash")
           end
         end
       end

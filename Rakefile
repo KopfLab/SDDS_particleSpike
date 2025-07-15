@@ -4,6 +4,7 @@
 # install ruby rake with: bundle install
 # log into your particle account with: particle login
 # to compile program x: rake x
+# to compile program x locally: rake local x
 # to compile program x without shortcut: rake compile PROGRAM=x
 # to flash latest compile via USB: rake flash
 # to flash latest compile via cloud: rake flash DEVICE=name
@@ -13,11 +14,22 @@
 
 ### EXAMPE PROGRAMS ###
 
-task :led => :compile
-task :cloudLed => :compile
 
-desc "compile particleSpike example"
-task :particleSpike => :compile
+desc "SDDS example without particleSpike"
+task :sdds => :compile
+
+desc "LED example with particleSpike"
+task :led => :compile
+
+desc "ADC example with particleSpike"
+task :adc => :compile
+
+desc "template with particleSpike"
+task :template => :compile
+
+desc "example for project in src"
+task :this => :compile
+
 
 ### SETUP ###
 
@@ -32,7 +44,7 @@ versions = {
   'p2' => '6.3.2', # not LTS but required for CloudEvent
   'photon' => '2.3.1',  # LTS
   'argon' => '4.2.0',   # LTS
-  'boron' => '4.2.0'    # LTS
+  'boron' => '6.3.2'    # LTS
 }
 
 # constants
@@ -97,9 +109,10 @@ task :compile do
   unless Dir.exist?(src_path)
     raise "Error: folder '#{src_path}' does not exist."
   end
-  src_files = Dir.glob("#{src_path}/**/*.{h,c,cpp,properties}")
-  all_files = src_files
-  dest_files = src_files.map { 
+  src_files = Dir.glob("#{src_path}/**/*.{h,c,cpp}")
+  properties_files = Dir.glob("#{src_path}/../project.properties")
+  all_files = src_files + properties_files
+  dest_files = all_files.map { 
     |path| File.join(local_folder, src_folder, File.basename(path)) 
   }
 
@@ -258,12 +271,16 @@ task :makeLocal do
   Open3.popen2e(cmd) do |stdin, stdout_and_err, wait_thr|
     stdout_and_err.each { |line| puts line }
     exit_status = wait_thr.value
-    abort "Command failed!" unless exit_status.success?
-    output_path = "#{local_root}/target/#{platform}/#{local_folder}.bin"
-    if File.exist?(output_path)
-      bin_path = "#{bin_folder}/#{program}-#{platform}-#{version}-local.bin"
-      puts "INFO: saving bin in #{bin_path}"
-      FileUtils.cp(output_path, bin_path)
+    if exit_status.success?
+      output_path = "#{local_root}/target/#{platform}/#{local_folder}.bin"
+      if File.exist?(output_path)
+        bin_path = "#{bin_folder}/#{program}-#{platform}-#{version}-local.bin"
+        puts "INFO: saving bin in #{bin_path}"
+        FileUtils.cp(output_path, bin_path)
+      end
+    else
+      puts "\n*** COMPILE FAILED ***"
+      puts "If you switched programs, platforms, or versions, you may need to clean: rake cleanLocal PLATFORM=#{platform} VERSION=#{version}\n\n"
     end
   end
 end
@@ -358,7 +375,7 @@ end
 ### TOOLS ###
 
 desc "remove .bin files"
-task :clean do
+task :cleanBin do
   puts "\nINFO: removing all .bin files..."
   sh "rm -f #{bin_folder}/*.bin"
 end
