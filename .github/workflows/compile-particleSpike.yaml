@@ -20,6 +20,7 @@ jobs:
         program:
           - name: 'particleSpike'
             lib: 'SDDS'
+            aux: 'src'
         # CHANGE platforms as needed
         platform: 
           - {name: 'p2', version: '6.3.2'}
