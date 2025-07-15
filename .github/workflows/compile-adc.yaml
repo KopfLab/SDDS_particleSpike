@@ -1,14 +1,15 @@
 # name of the job
-name: Compile SDDS with particle cloud test
+name: Compile ADC example
 
 # specify which paths to watch for changes
 on:
   push:
     paths:
-      - examples/cloudLed
-      - lib/SDDS
+      - examples/adc
+      - lib/SDDS/src
+      - src
       - .github/workflows/compile.yaml
-      - .github/workflows/compile-cloudLed.yaml
+      - .github/workflows/compile-adc.yaml
 
 # run compile via the compile.yaml
 jobs:
@@ -18,8 +19,9 @@ jobs:
       matrix:
         # CHANGE program and specify lib/aux and non-default src as needed
         program:
-          - name: 'cloudLed'
+          - name: 'adc'
             lib: 'SDDS'
+            aux: 'src'
         # CHANGE platforms as needed
         platform: 
           - {name: 'p2', version: '6.3.2'}
