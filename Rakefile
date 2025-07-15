@@ -125,6 +125,13 @@ task :compile do
 
   # aux files
   unless aux_files.nil? || aux_files.strip.empty?
+    aux_files = aux_files.strip.split(/\s+/).map do |path|
+      if Dir.exist?(path) 
+        Dir.glob("#{path}/**/*.{h,c,cpp}")
+      else
+        path
+      end
+    end.compact.flatten
     all_files = all_files + aux_files
     dest_files = dest_files + aux_files.map { 
       |path| File.join(local_folder, src_folder, File.basename(path)) 
