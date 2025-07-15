@@ -1,10 +1,14 @@
-[![led](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-led.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-led.yaml)
+[![ssds](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-sdds.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-sdds.yaml)
+[![led](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-led.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-led.yaml)
+[![adc](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-adc.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-adc.yaml)
 
-[![cloudLed](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-cloudLed.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-cloudLed.yaml)
+# SDDS particleSpike
 
-[![particleSpike](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-particleSpike.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particle_test/actions/workflows/compile-particleSpike.yaml)
+This library is an extension of the [SDDS library](https://github.com/mLamneck/SDDS) for self-describing data structures. It implements SDDS functionality for managing and communicating with [Particle microcontrollers](https://store.particle.io) via the cloud. The primary supported devices are the [Photon 2](https://store.particle.io/collections/wifi/products/photon-2) for WiFi connectivity, and the [Boron](https://store.particle.io/collections/cellular/products/boron-lte-cat-m1-noram-with-ethersim-4th-gen) for Cellular connectivity, but other particle devices that can run [firmware](https://docs.particle.io/reference/device-os/versions) version 6.3.0 and newer are likely supported out of the box as well (e.g. the [Muon multi-radio devices](https://store.particle.io/collections/multiradio-satellite-lorawan)).
 
-# SDDS particle test
+## What can it do?
+
+
 
 ## How to compile on GitHub
 
@@ -14,7 +18,7 @@ This happens automatically for all examples set up in the [GitHub workflows](.gi
 
 To compile from a local code copy in the cloud:
 
- - clone this repository and all submodules (`git clone --recurse-submodules https://github.com/KopfLab/SDDS_particle_test`, see [dependencies](#dependencies) for details)
+ - clone this repository and all submodules (`git clone --recurse-submodules https://github.com/KopfLab/SDDS_particleSpike`, see [dependencies](#dependencies) for details)
  - install the [Particle Cloud command line interface (CLI)](https://github.com/spark/particle-cli)
  - log into your account with `particle login`
  - from the root of this repo directory, run `particle compile p2 examples/led lib/SDDS/src --target 6.3.2 --saveTo bin/led-p2-6.3.2.bin` (for the photon2 platform and firmware version 6.3.2)
