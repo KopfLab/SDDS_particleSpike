@@ -1,5 +1,5 @@
 # name of the job
-name: Compile SDDS example
+name: SDDS example
 
 # specify which paths to watch for changes
 on:

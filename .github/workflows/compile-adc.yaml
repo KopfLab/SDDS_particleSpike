@@ -1,5 +1,5 @@
 # name of the job
-name: Compile ADC example
+name: ADC example
 
 # specify which paths to watch for changes
 on:

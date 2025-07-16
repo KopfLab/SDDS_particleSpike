@@ -1,5 +1,5 @@
 # name of the job
-name: Compile LED example
+name: LED example
 
 # specify which paths to watch for changes
 on:
