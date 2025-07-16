@@ -54,6 +54,7 @@ backup/
 
 # Compiled firmware
 bin/*.bin
+local/*
 
 # Keys
 *.der

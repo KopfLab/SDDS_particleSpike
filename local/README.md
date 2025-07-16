@@ -1,1 +1,0 @@
-This directory only exists for compiling examples locally. Copy the /src subfolder of an example into this directory and run the local compiler using the particle toolchain extenion for VS Code (https://docs.particle.io/getting-started/developer-tools/workbench/). 

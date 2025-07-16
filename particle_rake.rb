@@ -94,8 +94,10 @@ task :compile do
   src_files = Dir.glob("#{src_path}/**/*.{h,c,cpp}")
   properties_files = Dir.glob("#{src_path}/../project.properties")
   all_files = src_files + properties_files
-  dest_files = all_files.map { 
+  dest_files = src_files.map { 
     |path| File.join(@local_folder, @src_folder, File.basename(path)) 
+  } + properties_files.map {
+    |path| File.join(@local_folder, File.basename(path))
   }
 
   # libs
