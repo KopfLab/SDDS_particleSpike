@@ -287,7 +287,7 @@ desc "flash binary over the air or via usb"
 task :flash do
 
   # is a binary selected?
-  unless bin.nil? || bin.strip.empty?
+  unless @bin_file.nil? || @bin_file.strip.empty?
     # user provided
     bin_path = "#{@bin_folder}/#{@bin_file}"
   else
@@ -305,7 +305,7 @@ task :flash do
   end
 
   # OTA or serial?
-  unless device.nil? || device.strip.empty?
+  unless @device.nil? || @device.strip.empty?
     # over the air
     puts "\nINFO: flashing #{bin_path} to #{@device} via the cloud..."
     sh "particle flash #{@device} #{bin_path}"
