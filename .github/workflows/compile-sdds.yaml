@@ -5,8 +5,7 @@ name: SDDS example
 on:
   push:
     paths:
-      - examples/sdds
-      - lib/SDDS/src
+      - examples/sdds/*
       - .github/workflows/compile.yaml
       - .github/workflows/compile-sdds.yaml
 

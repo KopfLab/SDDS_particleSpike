@@ -5,9 +5,8 @@ name: ADC example
 on:
   push:
     paths:
-      - examples/adc
-      - lib/SDDS/src
-      - src
+      - examples/adc/*
+      - src/*
       - .github/workflows/compile.yaml
       - .github/workflows/compile-adc.yaml
 

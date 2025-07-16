@@ -5,9 +5,8 @@ name: LED example
 on:
   push:
     paths:
-      - examples/led
-      - lib/SDDS/src
-      - src
+      - examples/led/*
+      - src/*
       - .github/workflows/compile.yaml
       - .github/workflows/compile-led.yaml
 

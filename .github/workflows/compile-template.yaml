@@ -5,9 +5,8 @@ name: Template
 on:
   push:
     paths:
-      - examples/template
-      - lib/SDDS/src
-      - src
+      - examples/template/*
+      - src/*
       - .github/workflows/compile.yaml
       - .github/workflows/compile-template.yaml
 
