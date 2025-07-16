@@ -10,7 +10,7 @@
 # upon changes to its code base (determined by the push->paths setting in the program
 # github compile- workflow file)
 # tldr; run:
-#   rake local PROGRAM autoCompile autoFlash
+#   rake local PROGRAM flash autoCompile autoFlash
 
 require 'yaml'
 
