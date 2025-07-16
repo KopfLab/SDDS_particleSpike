@@ -6,6 +6,7 @@ on:
   push:
     paths:
       - examples/sdds/*
+      - lib/SDDS/src/*
       - .github/workflows/compile.yaml
       - .github/workflows/compile-sdds.yaml
 
