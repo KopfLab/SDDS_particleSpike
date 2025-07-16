@@ -10,6 +10,11 @@
 SYSTEM_THREAD(ENABLED);
 #endif
 
+// use th eeprom file size as the max parameter save
+// (although this actually stored on the file system
+// and could be made larger if needed without issue)
+#define SDDS_PS_MAX_SIZE EEPROM_FILE_SIZE
+
 // use semiautomatic mode so that particle doesn't try to connect until setup
 // and the system thread isn't tied up during Particle.subscribe/function/variable
 SYSTEM_MODE(SEMI_AUTOMATIC);
