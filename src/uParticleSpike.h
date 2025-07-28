@@ -319,6 +319,16 @@ class TparticleSpike{
 					return data;
 				}
 
+				static Variant serializeData(dtypes::float64 _value, Tdescr* _unit = nullptr) {
+					Variant data;
+					data.set(FburstNumValueKey, _value);
+					if (_unit && _unit->type() == sdds::Ttype::STRING) {
+						// got a unit (double checking that it's string)
+						data.set(FburstUnitsKey, _unit->to_string().c_str());
+					}
+					return data;
+				}
+
 				static Variant serializeData(const dtypes::string& _text) {
 					Variant data;
 					data.set(FburstTextValueKey, _text);
@@ -965,38 +975,76 @@ class TparticleSpike{
 		/**
 		 * @brief variable wrapper for averaging numeric data
 		 * note that this still publishes the original numeric data format (e.g. int) if it's 
-		 * immediate publish (=1) but any averaging even of ints will turn them to floats
-		 * in the end it doesn't really make a difference in the resulting JSON though
+		 * immediate publish (=1) but any averaging even of ints will turn them to doubles
+		 * for numerical accuracy - in the end it doesn't really make a difference in the 
+		 * resulting JSON though
 		 */
 		template<class sdds_dtype>
 		class TparticleAveragingVarWrapper : public TparticleVarWrapper {
 			private:
-				// running stats for value averaging
-				dtypes::uint32 FsumCnt = 0;
-				dtypes::float64 Favg = 0;
-				dtypes::float64 Fm2 = 0;
-				dtypes::float64 Ftime = 0;
-			
-				void add(dtypes::float64 x) {
-					FsumCnt++;
-					if (FsumCnt > 1) {
-						// value
-						dtypes::float64 delta = x - Favg;
-						Favg += delta / FsumCnt;
-						Fm2 += delta * (x - Favg);
-						// time
-						delta = static_cast<dtypes::float64>(millis()) - Ftime;
-						Ftime += delta / FsumCnt;
-					} else {
-						// n = 1
-						Favg = x;
-						Ftime = static_cast<dtypes::float64>(millis());
+
+				// running stats variables
+				dtypes::uint32 Fcount = 0; // n: number of samples seen so far
+				dtypes::float64 FrunningM = 0; // M_k: running mean
+				dtypes::float64 FrunningT = 0; // T_k: sum of weighted squared deviations
+				dtypes::float64 FrunningW = 0; // W_k: accumulated weight
+
+				// keeping track of time
+				dtypes::TtickCount FstartTime = 0; // start time of the averaged value
+				dtypes::TtickCount FlatestTime = 0; // last time a value was received
+				dtypes::float64 FlatestValue = 0; // last value that was received
+
+				/**
+				 * @brief add a value to the running average
+				 * numerically stable running stats for value averaging are based on the 
+				 * West update of Welford's algorithm for weighted averages and variance.
+				 * for a detailed discussion and equations see the following publications
+				 * - West 1979: dl.acm.org/doi/10.1145/359146.359153
+				 * - Schubert & Gertz 2018: dl.acm.org/doi/10.1145/3221269.3223036
+				 * Sum of weights W:
+				 * W_k = W_{k-1} + w_k
+				 * Weighted mean M:
+				 * M_k = M_{k-1} + w_k / W_k * (x_k - M_{k-1})
+				 * Weighted squared deviation T: 
+				 * T_k = T_{k-1} + w_k / W_k * (x_k - M_{k-1}) * (x_k - M_{k-1}) * W_{k-1}
+				 * Variance S2:
+				 * S2 = T_n * n/((n-1) * W_n)
+				 * Optimized computation (West 1979):
+				 * Q = x_k - M_{k-1}
+				 * TEMP = W_{k-1} + w_k
+				 * R = Q * w_k / TEMP
+				 * M = M + R
+				 * T = T + R * W_{k-1} * Q
+				 * W_k = TEMP
+				 * @param _x new value x_k
+				 * @param _w weight w_k of the new value x_k
+				 */
+				void add(dtypes::float64 _x, dtypes::float64 _w) {
+					dtypes::float64 Q = _x - FrunningM;
+					dtypes::float64 TEMP = FrunningW + _w; 
+					dtypes::float64 R = Q * _w / TEMP;
+					FrunningM += R;
+					FrunningT += R * FrunningW * Q;
+					FrunningW = TEMP;
+				}
+
+				/**
+				 * @brief add latest value to the running average with the weight based on the time interval
+				 * sets the new latest value/time to the current value/time
+				 */
+				void addLatest() {
+					// do we already have a value?
+					if (FlatestTime > 0) {
+						add(FlatestValue, millis() - FlatestTime);
 					}
+					// set latest time and value
+					FlatestValue = static_cast<dtypes::float64>(typedVoi()->Fvalue);
+					FlatestTime = millis();
 				}
 
 				dtypes::float64 variance() {
-					// variance implemented based on Welford's algorithm
-					return ( (FsumCnt > 1) ? Fm2 / (FsumCnt - 1) : std::numeric_limits<dtypes::float64>::quiet_NaN());
+					// sample variance (for population variance skip the -1)
+					return ( (Fcount > 1 && FrunningW > 0) ? FrunningT * Fcount / ((Fcount - 1) * FrunningW) : std::numeric_limits<dtypes::float64>::quiet_NaN());
 				}
 
 				dtypes::float64 stdDev() {
@@ -1007,22 +1055,43 @@ class TparticleSpike{
 				sdds_dtype* typedVoi(){ return static_cast<sdds_dtype*>(this->FvarOrigin); } 
 
 				void clear () override {
-					FsumCnt = 0;
-					Favg = 0;
-					Fm2 = 0;
-					Ftime = 0;
+					// more than one data point --> start with latest (i.e. have a changeValue right away)
+					bool carryOver = (Fcount > 1);
+					Fcount = 0;
+					FrunningM = 0;
+					FrunningT = 0;
+					FrunningW = 0;
+					FlatestTime = 0;
+					if (carryOver) changeValue();
 				}
 
 				void changeValue() override{
-					add(static_cast<dtypes::float64>(typedVoi()->Fvalue));
+					Fcount++;
+					// first value
+					if (Fcount == 1) FstartTime = millis();
+					addLatest();
 				}
 
 				system_tick_t getTimeForPublish() override {
-					return Ftime;
+					if (Fcount == 1) {
+						// single point -> return single time
+						return FstartTime;
+					} else {
+						// multi point -> return middle of time interval
+						return (millis() + FstartTime)/2;
+					}
 				}
 				
 				Variant getDataForPublish() override {
-					return TparticleSerializer::serializeData(FsumCnt, Favg, stdDev(), FlinkedUnit);	
+					if (Fcount == 1) {
+						// single point -> return latest value
+						return TparticleSerializer::serializeData(FlatestValue, FlinkedUnit);	
+					} else {
+						// multi point -> add the value of the currently active data point before returning
+						// note: this does NOT increase the data point count, we're just finishing the calculation
+						addLatest();
+						return TparticleSerializer::serializeData(Fcount, FrunningM, stdDev(), FlinkedUnit);	
+					}
 				}
 
 			public:
@@ -1424,9 +1493,9 @@ class TparticleSpike{
 			// startup complete
 			on(sddsParticleSystem.state.time) {
 				// the state is loaded from EEPROM, this completes the startup
-				if (sddsParticleSystem.state.time > 0 && sddsParticleSystem.startup != TstartuStatus::e::complete) {
+				if (sddsParticleSystem.startup != TstartuStatus::e::complete) {
 					sddsParticleSystem.startup = TstartuStatus::e::complete;
-					// note: same as with state.error below, this is NOT recorded if it's after a user reset
+					// note: same as with state.error below, this is NOT sent to the cloud if it's after a user reset
 					// because the device goes back to default publish (NO)
 					Fpublisher.addToBurst(&sddsParticleSystem.vitals.lastRestart, millis());
 				}
@@ -1436,11 +1505,12 @@ class TparticleSpike{
 			on(sddsParticleSystem.state.error) {
 				if (sddsParticleSystem.state.error != TparamError::e::___) {
 					// encountered an error when loading system state from EEPROM
-					// FIXME: how should this be handled? if state didn't load the device has no
+					Fpublisher.addToBurst(&sddsParticleSystem.state.error, millis());
+					// FIXME: how should this really be handled? if state didn't load the device has no
 					// way of knowing whether it should publish this issue, worst case scenario
 					// noone realizes it had a restart that lead to a state loading problem
-					// MAYBE: force a publish of this issue? i.e. allow flagging a burst for
-					// publish irrespective of publishing::publish value?
+					// MAYBE: force a publish of this and the restart too? i.e. allow flagging 
+					// a burst for publish irrespective of publishing::publish value?
 				}
 			};
 
