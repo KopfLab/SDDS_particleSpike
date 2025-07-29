@@ -6,8 +6,6 @@
 #include "uPlainCommHandler.h"
 #include "uParticleSystem.h"
 
-TparticleSystem sddsParticleSystem;
-
 // define the publishing interval constants
 namespace sdds{
 
@@ -21,6 +19,7 @@ namespace sdds{
 	};
 }
 
+// particle spike class
 class TparticleSpike{
 
 	private:
@@ -256,8 +255,8 @@ class TparticleSpike{
 
 				static Variant serializeParticleTree(TmenuHandle* _struct) {
 					Variant var = serializeTree(_struct, false);
-					var.set(FtreeTypeKey, sddsParticleSystem.type.c_str());
-					var.set(FtreeVersionKey, sddsParticleSystem.version.value());
+					var.set(FtreeTypeKey, particleSystem().type.c_str());
+					var.set(FtreeVersionKey, particleSystem().version.value());
 					return var;
 				}
 
@@ -361,9 +360,9 @@ class TparticleSpike{
 					Variant burst;
 
 					// device name (if available, otherwise NULL)
-					if (sddsParticleSystem.name != "") {
+					if (particleSystem().name != "") {
 						burst.set(FburstDeviceNameKey, 
-							sddsParticleSystem.name.c_str());
+							particleSystem().name.c_str());
 					} else {
 						// note: if readyToPublish is checked first, will not get to this!
 						burst.set(FburstDeviceNameKey, Variant());
@@ -699,7 +698,7 @@ class TparticleSpike{
 					on(FburstTimer) {
 						Variant burst = TparticleSerializer::serializeBurst(FminTime, FburstData);
 						bool clear = true;
-						if (sddsParticleSystem.publishing.publish == TonOff::e::ON) {
+						if (particleSystem().publishing.publish == TonOff::e::ON) {
 							if (getCBORSize(burst) > 16 * particle::protocol::MAX_EVENT_DATA_LENGTH) {
 								// too large!
 								Log.error("have to discard a large data burst because it exceeded the 16kB cloud event limit");
@@ -707,12 +706,12 @@ class TparticleSpike{
 								// add to event data stack
 								Log.trace("*** QUEUING BURST ***");
 								FqueuedBursts.append(burst);
-								sddsParticleSystem.publishing.bursts.queued++;
+								particleSystem().publishing.bursts.queued++;
 								if (!FpublishCheckTimer.running()) FpublishCheckTimer.start(0);
 							} else {
 								// want to publish but not yet ready to, keep the burst going! --> restart the timer
 								clear = false;
-								FburstTimer.start(sddsParticleSystem.publishing.bursts.timerMS);
+								FburstTimer.start(particleSystem().publishing.bursts.timerMS);
 							}
 						} else {	
 							// publishing is OFF --> discard
@@ -737,20 +736,20 @@ class TparticleSpike{
 						if (!Fevent.isNew() && !Fevent.isSending()) {
 							if (Fevent.isSent()) {
 								Log.trace("publish succeeded");
-								sddsParticleSystem.publishing.bursts.sent += sddsParticleSystem.publishing.bursts.sending;
+								particleSystem().publishing.bursts.sent += particleSystem().publishing.bursts.sending;
 							} else if (!Fevent.isValid()) {
 								Log.trace("publish failed, invalid (error %d, discarding)", Fevent.error());
-								sddsParticleSystem.publishing.bursts.invalid += sddsParticleSystem.publishing.bursts.sending;
+								particleSystem().publishing.bursts.invalid += particleSystem().publishing.bursts.sending;
 							} else if (!Fevent.isOk()) {
 								Log.error("publish failed, recoverable (error %d, re-queuing)", Fevent.error());
-								sddsParticleSystem.publishing.bursts.failed += sddsParticleSystem.publishing.bursts.sending;
+								particleSystem().publishing.bursts.failed += particleSystem().publishing.bursts.sending;
 								for (auto var : FeventData) {
 									FqueuedBursts.append(var); // add what is in eventData back at the end of the queue
-									sddsParticleSystem.publishing.bursts.queued++;
+									particleSystem().publishing.bursts.queued++;
 								}
 							}
 							Fevent.clear();
-							sddsParticleSystem.publishing.bursts.sending = 0;
+							particleSystem().publishing.bursts.sending = 0;
 						}
 
 						//  check if new cloud event can be sent
@@ -767,21 +766,21 @@ class TparticleSpike{
 								}
 							}
 							// finalize event info
-							Fevent.name(sddsParticleSystem.publishing.event);
+							Fevent.name(particleSystem().publishing.event);
 							Fevent.data(FeventData);
-							sddsParticleSystem.publishing.bursts.sending = FeventData.size();
-							sddsParticleSystem.publishing.bursts.queued -= sddsParticleSystem.publishing.bursts.sending;
+							particleSystem().publishing.bursts.sending = FeventData.size();
+							particleSystem().publishing.bursts.queued -= particleSystem().publishing.bursts.sending;
 							// try to publish publish
 							if (!Particle.publish(Fevent)) {
 								Log.error("published failed immediately, discarding");
 								Fevent.clear();
-								sddsParticleSystem.publishing.bursts.invalid += sddsParticleSystem.publishing.bursts.sending;
-								sddsParticleSystem.publishing.bursts.sending = 0;
+								particleSystem().publishing.bursts.invalid += particleSystem().publishing.bursts.sending;
+								particleSystem().publishing.bursts.sending = 0;
 							}
 						}
 
 						// check in again?
-						if(Fevent.isSending() || sddsParticleSystem.publishing.bursts.queued > 0) 
+						if(Fevent.isSending() || particleSystem().publishing.bursts.queued > 0) 
 							FpublishCheckTimer.start(FpublishcheckInterval);
 					};
 
@@ -795,7 +794,7 @@ class TparticleSpike{
 					if (_d == nullptr) return; 
 					
 					// need to complete startup
-					if (sddsParticleSystem.startup != TstartuStatus::e::complete) return;
+					if (particleSystem().startup != TstartuStatus::e::complete) return;
 
 					// keep track of min time
 					if (FminTime == 0 || FminTime > _time) FminTime = _time;
@@ -813,7 +812,7 @@ class TparticleSpike{
 
 					// start burst timer if it's not already running
 					if (!FburstTimer.running()) 
-						FburstTimer.start(sddsParticleSystem.publishing.bursts.timerMS);
+						FburstTimer.start(particleSystem().publishing.bursts.timerMS);
 				}
 
 				/**
@@ -827,7 +826,7 @@ class TparticleSpike{
 				 * @brief check if we're ready to publish (need a name and valid time)
 				 */
 				bool readyToPublish() {
-					return sddsParticleSystem.name != "" && Time.isValid();
+					return particleSystem().name != "" && Time.isValid();
 				}
 
 		} 
@@ -895,7 +894,7 @@ class TparticleSpike{
 					// call back for origin value change
 					ForiginCbw = [this](void* _ctx){ 
 						// only start collecting values once startup is complete
-						if (sddsParticleSystem.startup == TstartuStatus::e::complete) {
+						if (particleSystem().startup == TstartuStatus::e::complete) {
 							if (Fvalue == publish::ALWAYS) {
 								// publish current variable value immediately
 								if (Fpublisher) {
@@ -1148,7 +1147,7 @@ class TparticleSpike{
 		}
 		void createVariableIntervalsTree(TmenuHandle* _src){
 			createVariableIntervalsTree(_src, &sddsParticleVariables);
-			sddsParticleSystem.publishing.addDescr(sddsParticleVariables);
+			particleSystem().publishing.addDescr(&sddsParticleVariables);
 		}
 
 		/**
@@ -1438,14 +1437,14 @@ class TparticleSpike{
 		 */
 		TparticleSpike(TmenuHandle& _root, const dtypes::string& _type, dtypes::uint16 _version, const dtypes::string& _unit): Fpch(_root, nullptr) {
 			Froot = _root;
-			sddsParticleSystem.type = _type;
-			sddsParticleSystem.version = _version;
+			particleSystem().type = _type;
+			particleSystem().version = _version;
 			FunitVarName = _unit;
 			FunitAutoDetect = FunitVarName != "";
 
 			// custom system actions
-			on(sddsParticleSystem.action) {
-				if (sddsParticleSystem.action==TsystemAction::e::snapshot){
+			on(particleSystem().action) {
+				if (particleSystem().action==TsystemAction::e::snapshot){
 					
 					// get snapshot
 					Variant snapshot = TparticleSerializer::serializeValuesForSnapshot(Froot);
@@ -1459,53 +1458,53 @@ class TparticleSpike{
 					Fpublisher.addToBurst(Froot, millis(), snapshot);
 
 					// add all variables to burst that are saveval
-					sddsParticleSystem.action = TsystemAction::e::___;
+					particleSystem().action = TsystemAction::e::___;
 				}
 			};
 
 			// global publishing interval
-            on(sddsParticleSystem.publishing.globalIntervalMS) {
-                if (sddsParticleSystem.publishing.globalIntervalMS < 1000) 
-                    sddsParticleSystem.publishing.globalIntervalMS = 1000; // don't allow publishing any faster than once a second
+            on(particleSystem().publishing.globalIntervalMS) {
+                if (particleSystem().publishing.globalIntervalMS < 1000) 
+                    particleSystem().publishing.globalIntervalMS = 1000; // don't allow publishing any faster than once a second
 				FglobalPublishTimer.stop();
 				resetGlobal();
-				FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);		
+				FglobalPublishTimer.start(particleSystem().publishing.globalIntervalMS);		
             };
-			FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
+			FglobalPublishTimer.start(particleSystem().publishing.globalIntervalMS);
 
 			// (re)start timer when publishing is turned on
-			on(sddsParticleSystem.publishing.publish) {
+			on(particleSystem().publishing.publish) {
 				// Q: should this only trigger if it is _changed_ to ON?
 				// (currently this triggers every time it's set even if it's already ON)
-				if (sddsParticleSystem.publishing.publish == TonOff::e::ON) {
+				if (particleSystem().publishing.publish == TonOff::e::ON) {
 					FglobalPublishTimer.stop();
 					resetGlobal();
-					FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
+					FglobalPublishTimer.start(particleSystem().publishing.globalIntervalMS);
 				}
 			};
 
 			// publish timer triggers
 			on(FglobalPublishTimer) {
 				publishGlobal(); // variables reset themselves after publish
-				FglobalPublishTimer.start(sddsParticleSystem.publishing.globalIntervalMS);
+				FglobalPublishTimer.start(particleSystem().publishing.globalIntervalMS);
 			};
 
 			// startup complete
-			on(sddsParticleSystem.state.time) {
+			on(particleSystem().state.time) {
 				// the state is loaded from EEPROM, this completes the startup
-				if (sddsParticleSystem.startup != TstartuStatus::e::complete) {
-					sddsParticleSystem.startup = TstartuStatus::e::complete;
+				if (particleSystem().startup != TstartuStatus::e::complete) {
+					particleSystem().startup = TstartuStatus::e::complete;
 					// note: same as with state.error below, this is NOT sent to the cloud if it's after a user reset
 					// because the device goes back to default publish (NO)
-					Fpublisher.addToBurst(&sddsParticleSystem.vitals.lastRestart, millis());
+					Fpublisher.addToBurst(&particleSystem().vitals.lastRestart, millis());
 				}
 			};
 
 			// system error
-			on(sddsParticleSystem.state.error) {
-				if (sddsParticleSystem.state.error != TparamError::e::___) {
+			on(particleSystem().state.error) {
+				if (particleSystem().state.error != TparamError::e::___) {
 					// encountered an error when loading system state from EEPROM
-					Fpublisher.addToBurst(&sddsParticleSystem.state.error, millis());
+					Fpublisher.addToBurst(&particleSystem().state.error, millis());
 					// FIXME: how should this really be handled? if state didn't load the device has no
 					// way of knowing whether it should publish this issue, worst case scenario
 					// noone realizes it had a restart that lead to a state loading problem
@@ -1516,12 +1515,12 @@ class TparticleSpike{
 
 			// debug actions
 			#ifdef SDDS_PARTICLE_DEBUG
-			on(sddsParticleSystem.debug) {
-				if (sddsParticleSystem.debug == TdebugAction::e::getValues) {
+			on(particleSystem().debug) {
+				if (particleSystem().debug == TdebugAction::e::getValues) {
 					Log.trace("*** VALUES ***");
 					Log.print(TparticleSerializer::serializeValuesOnly(Froot).toJSON().c_str());
 					Log.print("\n");
-				} else if (sddsParticleSystem.debug == TdebugAction::e::getTree) {
+				} else if (particleSystem().debug == TdebugAction::e::getTree) {
 					Log.trace("*** TREE ***");
 					Log.print(FstructVar.toJSON().c_str());
 					Log.print("\n");
@@ -1529,11 +1528,11 @@ class TparticleSpike{
 					//Log.trace("\nCBOR in base64 (size %d): ", base64.length());
 					//Log.print(base64);
 					//Log.print("\n");
-				} else if (sddsParticleSystem.debug == TdebugAction::e::setVars) {
-					Log.trace("*** SET VARS: %s ***", sddsParticleSystem.command.c_str());
-					Log.trace("retval: %d", setVariables(String(sddsParticleSystem.command.c_str())));
+				} else if (particleSystem().debug == TdebugAction::e::setVars) {
+					Log.trace("*** SET VARS: %s ***", particleSystem().command.c_str());
+					Log.trace("retval: %d", setVariables(String(particleSystem().command.c_str())));
 					Log.print("\n");
-				} else if (sddsParticleSystem.debug == TdebugAction::e::setDefaults) {
+				} else if (particleSystem().debug == TdebugAction::e::setDefaults) {
 					setupDefaults(
 						{
 							{publish::ALWAYS, sdds::opt::saveval},
@@ -1541,13 +1540,13 @@ class TparticleSpike{
 						}
 					);
 				}
-				if (sddsParticleSystem.debug == TdebugAction::e::getCommandLog || sddsParticleSystem.debug == TdebugAction::e::setVars) {
+				if (particleSystem().debug == TdebugAction::e::getCommandLog || particleSystem().debug == TdebugAction::e::setVars) {
 					Log.trace("*** CMD LOG ***");
 					Log.print(FcmdLog);
 					Log.print("\n");
 				}
-				if (sddsParticleSystem.debug != TdebugAction::e::___) {
-					sddsParticleSystem.debug = TdebugAction::e::___;
+				if (particleSystem().debug != TdebugAction::e::___) {
+					particleSystem().debug = TdebugAction::e::___;
 				}
 			};
 			#endif
@@ -1561,7 +1560,7 @@ class TparticleSpike{
 		 */
 		void setup(const std::vector<TintervalDefault>& _defaults = {}){
 			// add SYSTEM menu
-			Froot->addDescr(&sddsParticleSystem, 0);
+			Froot->addDescr(&particleSystem(), 0);
 			
 			// generate publishing intervals tree for all variables
 			createVariableIntervalsTree(Froot);
@@ -1580,28 +1579,28 @@ class TparticleSpike{
                 // https://docs.particle.io/reference/cloud-apis/api/#spark-device-last_reset
                 uint32_t panicCode = System.resetReasonData();
                 Log.error("restarted due to PANIC, code: %lu", panicCode);
-                sddsParticleSystem.vitals.lastRestart = TresetStatus::e::PANIC;
+                particleSystem().vitals.lastRestart = TresetStatus::e::PANIC;
                 //System.enterSafeMode(); // go straight to safe mode?
             } else if (System.resetReason() == RESET_REASON_WATCHDOG) {
                 // hardware watchdog detected a timeout
                 Log.warn("restarted due to watchdog (=timeout)");
-                sddsParticleSystem.vitals.lastRestart = TresetStatus::e::watchdogTimeout;
+                particleSystem().vitals.lastRestart = TresetStatus::e::watchdogTimeout;
             } else if (System.resetReason() == RESET_REASON_USER) {
                 // software triggered resets
                 uint32_t userReset = System.resetReasonData();
                 if (userReset == static_cast<uint8_t>(TresetStatus::e::outOfMemory)) {
                     // low memory detected
                     Log.warn("restarted due to low memory");
-                    sddsParticleSystem.vitals.lastRestart = TresetStatus::e::outOfMemory;
+                    particleSystem().vitals.lastRestart = TresetStatus::e::outOfMemory;
                 } else if (userReset == static_cast<uint8_t>(TresetStatus::e::userRestart)) {
                     // user requested a restart
                     Log.trace("restarted per user request");
-                    sddsParticleSystem.vitals.lastRestart = TresetStatus::e::userRestart;
+                    particleSystem().vitals.lastRestart = TresetStatus::e::userRestart;
                 } else if (userReset == static_cast<uint8_t>(TresetStatus::e::userReset)) {
 					resetState = true;
                     // user requested a restart
                     Log.trace("restarted and resetting per user request");
-					sddsParticleSystem.vitals.lastRestart = TresetStatus::e::userReset;
+					particleSystem().vitals.lastRestart = TresetStatus::e::userReset;
                 } 
             } else {
                 // report any of the other reset reasons? 

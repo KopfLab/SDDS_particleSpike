@@ -19,6 +19,8 @@ SYSTEM_THREAD(ENABLED);
 // and the system thread isn't tied up during Particle.subscribe/function/variable
 SYSTEM_MODE(SEMI_AUTOMATIC);
 
+// FIXME: move these enums INTO the class
+
 // sdds enumerations
 sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, snapshot) TsystemAction;
 sdds_enum(connecting, connected, disconnected) TinternetStatus;
@@ -301,3 +303,11 @@ class TparticleSystem : public TmenuHandle {
         }
 
 };
+
+/**
+ * @brief get the static particle system instance
+ */
+TparticleSystem& particleSystem(){
+    static TparticleSystem particle;
+    return particle;
+}
