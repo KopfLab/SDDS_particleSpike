@@ -19,18 +19,6 @@ SYSTEM_THREAD(ENABLED);
 // and the system thread isn't tied up during Particle.subscribe/function/variable
 SYSTEM_MODE(SEMI_AUTOMATIC);
 
-// FIXME: move these enums INTO the class
-
-// sdds enumerations
-sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, snapshot) TsystemAction;
-sdds_enum(connecting, connected, disconnected) TinternetStatus;
-sdds_enum(nominal, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) TresetStatus;
-sdds_enum(___, complete) TstartupStatus;
-
-#ifdef SDDS_PARTICLE_DEBUG
-sdds_enum(___, getValues, getTree, getCommandLog, setVars, setDefaults) TdebugAction;
-#endif
-
 /**
  * @brief automatically added menu item that holds system variables
  * this is added as the first menu entry with structure type and version
@@ -51,11 +39,16 @@ class TparticleSystem : public TmenuHandle {
         // system variables
         sdds_var(Tstring,id,sdds::opt::readonly) // device ID
         sdds_var(Tstring,name,sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly)) // cloud derived device name 
+
+        sdds_enum(___, complete) TstartupStatus;
         sdds_var(TstartupStatus,startup,sdds::opt::readonly) // keeps track of startup processes
+
+        sdds_enum(connecting, connected, disconnected) TinternetStatus;
         sdds_var(TinternetStatus,internet,sdds::opt::readonly,TinternetStatus::e::connecting) // internet status
         sdds_var(TparamSaveMenu,state) // load/save state
 
         // vitals variables
+        sdds_enum(nominal, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) TresetStatus;
         class Tvitals : public TmenuHandle{
             public:
                 sdds_var(Tuint32,publishVitalsSEC,sdds::opt::saveval,60*60*6) // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
@@ -114,9 +107,13 @@ class TparticleSystem : public TmenuHandle {
                 sdds_var(Tuint32, globalIntervalMS, sdds::opt::saveval, 1000 * 60 * 10) // global publish interval
         };
         sdds_var(Tpublishing,publishing)
-        sdds_var(TsystemAction,action) // take a system action
 
+        sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, snapshot) Taction;
+        sdds_var(Taction,action) // take a system action
+
+        // debug tools
         #ifdef SDDS_PARTICLE_DEBUG
+        sdds_enum(___, getValues, getTree, getCommandLog, setVars, setDefaults) TdebugAction;
         sdds_var(TdebugAction,debug) // debug actions
         sdds_var(Tstring,command) // debug actions
         #endif
@@ -183,13 +180,13 @@ class TparticleSystem : public TmenuHandle {
 			// system actions
 			on(action){
 				bool reset = true;
-				if (action==TsystemAction::e::restart){
+				if (action==Taction::e::restart){
 					// user requests a restart
 					System.reset(static_cast<uint8_t>(TresetStatus::e::userRestart));
-                } else if (action==TsystemAction::e::reset){
+                } else if (action==Taction::e::reset){
 					// user requests a restart
 					System.reset(static_cast<uint8_t>(TresetStatus::e::userReset));
-				} else if (action==TsystemAction::e::disconnect && internet != TinternetStatus::e::disconnected) {
+				} else if (action==Taction::e::disconnect && internet != TinternetStatus::e::disconnected) {
 					// user requests to disconnect
 					Log.trace("disconnecting from the cloud");
 					internet = TinternetStatus::e::disconnected;
@@ -197,14 +194,14 @@ class TparticleSystem : public TmenuHandle {
 					// note: this does NOT turn wifi/cellular modem off! 
 					// if that's intended (e.g. for power safe), see the restrictions about cellular sim card locks
 					// at https://docs.particle.io/reference/device-os/api/cellular/off/
-				} else if (action==TsystemAction::e::reconnect && internet == TinternetStatus::e::disconnected) {
+				} else if (action==Taction::e::reconnect && internet == TinternetStatus::e::disconnected) {
 					// user requests to reconnect
 					Log.trace("reconnecting to the cloud");
 					internet = TinternetStatus::e::connecting;
 					Particle.connect();
-				} else if (action==TsystemAction::e::syncTime) {
+				} else if (action==Taction::e::syncTime) {
                     FresyncSysTime = true;
-                } else if (action==TsystemAction::e::sendVitals) {
+                } else if (action==Taction::e::sendVitals) {
                     // publish vitals to the cloud right now
                     Particle.publishVitals(particle::NOW);
                 } else {
@@ -212,7 +209,7 @@ class TparticleSystem : public TmenuHandle {
                     reset = false;
                 }
 
-				if (reset) action = TsystemAction::e::___;
+				if (reset) action = Taction::e::___;
 			};
 
             // vitals publishing interval

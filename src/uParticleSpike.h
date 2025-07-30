@@ -813,7 +813,7 @@ class TparticleSpike{
 					if (_d == nullptr) return; 
 					
 					// need to complete startup
-					if (particleSystem().startup != TstartupStatus::e::complete) return;
+					if (particleSystem().startup != TparticleSystem::TstartupStatus::e::complete) return;
 
 					// debug info
 					#ifdef SDDS_PARTICLE_DEBUG
@@ -918,7 +918,7 @@ class TparticleSpike{
 					// call back for origin value change
 					ForiginCbw = [this](void* _ctx){ 
 						// only start collecting values once startup is complete
-						if (particleSystem().startup == TstartupStatus::e::complete) {
+						if (particleSystem().startup == TparticleSystem::TstartupStatus::e::complete) {
 							if (Fvalue == publish::ALWAYS) {
 								// publish current variable value immediately
 								if (Fpublisher) {
@@ -1468,7 +1468,7 @@ class TparticleSpike{
 
 			// custom system actions
 			on(particleSystem().action) {
-				if (particleSystem().action==TsystemAction::e::snapshot){
+				if (particleSystem().action == TparticleSystem::Taction::e::snapshot){
 					
 					// get snapshot
 					Variant snapshot = TparticleSerializer::serializeValuesForSnapshot(Froot);
@@ -1482,7 +1482,7 @@ class TparticleSpike{
 					Fpublisher.addToBurst(Froot, millis(), snapshot);
 
 					// add all variables to burst that are saveval
-					particleSystem().action = TsystemAction::e::___;
+					particleSystem().action = TparticleSystem::Taction::e::___;
 				}
 			};
 
@@ -1516,8 +1516,8 @@ class TparticleSpike{
 			// startup complete
 			on(particleSystem().state.time) {
 				// the state is loaded from EEPROM, this completes the startup
-				if (particleSystem().startup != TstartupStatus::e::complete) {
-					particleSystem().startup = TstartupStatus::e::complete;
+				if (particleSystem().startup != TparticleSystem::TstartupStatus::e::complete) {
+					particleSystem().startup = TparticleSystem::TstartupStatus::e::complete;
 					// --> always publish restart
 					Fpublisher.addToBurst(&particleSystem().vitals.lastRestart, millis(), true);
 				}
@@ -1535,11 +1535,11 @@ class TparticleSpike{
 			// debug actions
 			#ifdef SDDS_PARTICLE_DEBUG
 			on(particleSystem().debug) {
-				if (particleSystem().debug == TdebugAction::e::getValues) {
+				if (particleSystem().debug == TparticleSystem::TdebugAction::e::getValues) {
 					Log.trace("*** VALUES ***");
 					Log.print(TparticleSerializer::serializeValuesOnly(Froot).toJSON().c_str());
 					Log.print("\n");
-				} else if (particleSystem().debug == TdebugAction::e::getTree) {
+				} else if (particleSystem().debug == TparticleSystem::TdebugAction::e::getTree) {
 					Log.trace("*** TREE ***");
 					Log.print(FstructVar.toJSON().c_str());
 					Log.print("\n");
@@ -1547,11 +1547,11 @@ class TparticleSpike{
 					//Log.trace("\nCBOR in base64 (size %d): ", base64.length());
 					//Log.print(base64);
 					//Log.print("\n");
-				} else if (particleSystem().debug == TdebugAction::e::setVars) {
+				} else if (particleSystem().debug == TparticleSystem::TdebugAction::e::setVars) {
 					Log.trace("*** SET VARS: %s ***", particleSystem().command.c_str());
 					Log.trace("retval: %d", setVariables(String(particleSystem().command.c_str())));
 					Log.print("\n");
-				} else if (particleSystem().debug == TdebugAction::e::setDefaults) {
+				} else if (particleSystem().debug == TparticleSystem::TdebugAction::e::setDefaults) {
 					setupDefaults(
 						{
 							{publish::ALWAYS, sdds::opt::saveval},
@@ -1559,13 +1559,14 @@ class TparticleSpike{
 						}
 					);
 				}
-				if (particleSystem().debug == TdebugAction::e::getCommandLog || particleSystem().debug == TdebugAction::e::setVars) {
+				if (particleSystem().debug == TparticleSystem::TdebugAction::e::getCommandLog || 
+						particleSystem().debug == TparticleSystem::TdebugAction::e::setVars) {
 					Log.trace("*** CMD LOG ***");
 					Log.print(FcmdLog);
 					Log.print("\n");
 				}
-				if (particleSystem().debug != TdebugAction::e::___) {
-					particleSystem().debug = TdebugAction::e::___;
+				if (particleSystem().debug != TparticleSystem::TdebugAction::e::___) {
+					particleSystem().debug = TparticleSystem::TdebugAction::e::___;
 				}
 			};
 			#endif
@@ -1598,28 +1599,28 @@ class TparticleSpike{
                 // https://docs.particle.io/reference/cloud-apis/api/#spark-device-last_reset
                 uint32_t panicCode = System.resetReasonData();
                 Log.error("restarted due to PANIC, code: %lu", panicCode);
-                particleSystem().vitals.lastRestart = TresetStatus::e::PANIC;
+                particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::e::PANIC;
                 //System.enterSafeMode(); // go straight to safe mode?
             } else if (System.resetReason() == RESET_REASON_WATCHDOG) {
                 // hardware watchdog detected a timeout
                 Log.warn("restarted due to watchdog (=timeout)");
-                particleSystem().vitals.lastRestart = TresetStatus::e::watchdogTimeout;
+                particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::e::watchdogTimeout;
             } else if (System.resetReason() == RESET_REASON_USER) {
                 // software triggered resets
                 uint32_t userReset = System.resetReasonData();
-                if (userReset == static_cast<uint8_t>(TresetStatus::e::outOfMemory)) {
+                if (userReset == static_cast<uint8_t>(TparticleSystem::TresetStatus::e::outOfMemory)) {
                     // low memory detected
                     Log.warn("restarted due to low memory");
-                    particleSystem().vitals.lastRestart = TresetStatus::e::outOfMemory;
-                } else if (userReset == static_cast<uint8_t>(TresetStatus::e::userRestart)) {
+                    particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::e::outOfMemory;
+                } else if (userReset == static_cast<uint8_t>(TparticleSystem::TresetStatus::e::userRestart)) {
                     // user requested a restart
                     Log.trace("restarted per user request");
-                    particleSystem().vitals.lastRestart = TresetStatus::e::userRestart;
-                } else if (userReset == static_cast<uint8_t>(TresetStatus::e::userReset)) {
+                    particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::e::userRestart;
+                } else if (userReset == static_cast<uint8_t>(TparticleSystem::TresetStatus::e::userReset)) {
 					resetState = true;
                     // user requested a restart
                     Log.trace("restarted and resetting per user request");
-					particleSystem().vitals.lastRestart = TresetStatus::e::userReset;
+					particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::e::userReset;
                 } 
             } else {
                 // report any of the other reset reasons? 
