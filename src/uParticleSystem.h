@@ -25,7 +25,7 @@ SYSTEM_MODE(SEMI_AUTOMATIC);
 sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, snapshot) TsystemAction;
 sdds_enum(connecting, connected, disconnected) TinternetStatus;
 sdds_enum(nominal, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) TresetStatus;
-sdds_enum(___, complete) TstartuStatus;
+sdds_enum(___, complete) TstartupStatus;
 
 #ifdef SDDS_PARTICLE_DEBUG
 sdds_enum(___, getValues, getTree, getCommandLog, setVars, setDefaults) TdebugAction;
@@ -51,7 +51,7 @@ class TparticleSystem : public TmenuHandle {
         // system variables
         sdds_var(Tstring,id,sdds::opt::readonly) // device ID
         sdds_var(Tstring,name,sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly)) // cloud derived device name 
-        sdds_var(TstartuStatus,startup,sdds::opt::readonly) // keeps track of startup processes
+        sdds_var(TstartupStatus,startup,sdds::opt::readonly) // keeps track of startup processes
         sdds_var(TinternetStatus,internet,sdds::opt::readonly,TinternetStatus::e::connecting) // internet status
         sdds_var(TparamSaveMenu,state) // load/save state
 
@@ -98,12 +98,13 @@ class TparticleSystem : public TmenuHandle {
 
             class Tbursts : public TmenuHandle{
                 public:
-                    sdds_var(Tuint32, timerMS, sdds::opt::saveval, 1000) // how many MS is a data burst?
+                    sdds_var(Tuint32, timerMS, sdds::opt::saveval, 3000) // how many MS is a data burst?
                     sdds_var(Tuint32, queued, sdds::opt::readonly, 0) // number of currently queued bursts
                     sdds_var(Tuint32, sending, sdds::opt::readonly, 0) // number of currently sending bursts
                     sdds_var(Tuint32, sent, sdds::opt::readonly, 0) // number of successfully sent bursts
                     sdds_var(Tuint32, failed, sdds::opt::readonly, 0) // number of failed/requeued bursts
                     sdds_var(Tuint32, invalid, sdds::opt::readonly, 0) // number of invalid/discarded bursts
+                    sdds_var(Tuint32, discarded, sdds::opt::readonly, 0) // number of invalid/discarded bursts
             };
 
             public:
@@ -159,7 +160,7 @@ class TparticleSystem : public TmenuHandle {
                 // device id
                 id = Particle.deviceID();
 
-                // store mac address
+                // store mac ress
                 #if Wiring_WiFi
                 byte bytes[6];
                 WiFi.macAddress(bytes);

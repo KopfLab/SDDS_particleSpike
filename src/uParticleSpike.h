@@ -679,6 +679,7 @@ class TparticleSpike{
 			private:
 				
 				// burst & publish management 
+				bool FnewBurstData = false;
         		system_tick_t FminTime = 0; // smallest burst data timestamp (to normalize against)
 				std::vector<TvarBurstDataset> FburstData; // data in current burst
 				Ttimer FburstTimer; // timer keeping track of bursts
@@ -688,7 +689,29 @@ class TparticleSpike{
 				const system_tick_t FpublishcheckInterval = 200; // publish status check timer [ms]
 				Ttimer FpublishCheckTimer; // publish check timer
 
-				
+				/**
+				 * @brief check if we're ready to publish (need a name and valid time)
+				 */
+				bool readyToPublish() {
+					return particleSystem().name != "" && Time.isValid();
+				}
+
+				void printBurst(const Variant& burst) {
+					if (Log.isTraceEnabled()) {
+						Log.print(burst.toJSON().c_str());
+						Log.print("\n");
+					}
+				}
+
+				/**
+				 * @brief clear burst
+				 */
+				void clearBurst() {
+					FnewBurstData = false;
+					FburstData.clear();
+					FminTime = 0;
+				}
+
 			public:
 
 				// constructor + logic
@@ -697,35 +720,31 @@ class TparticleSpike{
 					// data bursts
 					on(FburstTimer) {
 						Variant burst = TparticleSerializer::serializeBurst(FminTime, FburstData);
-						bool clear = true;
-						if (particleSystem().publishing.publish == TonOff::e::ON) {
-							if (getCBORSize(burst) > 16 * particle::protocol::MAX_EVENT_DATA_LENGTH) {
-								// too large!
-								Log.error("have to discard a large data burst because it exceeded the 16kB cloud event limit");
-							} else if (readyToPublish()) {
-								// add to event data stack
-								Log.trace("*** QUEUING BURST ***");
-								FqueuedBursts.append(burst);
-								particleSystem().publishing.bursts.queued++;
-								if (!FpublishCheckTimer.running()) FpublishCheckTimer.start(0);
-							} else {
-								// want to publish but not yet ready to, keep the burst going! --> restart the timer
-								clear = false;
-								FburstTimer.start(particleSystem().publishing.bursts.timerMS);
+						if (getCBORSize(burst) > 16 * particle::protocol::MAX_EVENT_DATA_LENGTH) {
+							// burst too large!
+							Log.error("have to discard a large data burst because it exceeded the 16kB cloud event limit");
+							// FIXME: should this be reported as an error in some additional way?
+							particleSystem().publishing.bursts.discarded++;
+							printBurst(burst);
+							clearBurst();
+						} else if (readyToPublish()) {
+							// add to event data stack
+							Log.trace("*** QUEUING BURST: ***");
+							FqueuedBursts.append(burst);
+							printBurst(burst);
+							clearBurst();
+							particleSystem().publishing.bursts.queued++;
+							if (!FpublishCheckTimer.running()) FpublishCheckTimer.start(0);
+						} else {
+							// want to publish but not yet ready to
+							// --> keep the burst going = restart the timer
+							if (FnewBurstData) {
+								// evrerytime there's new data, show it
+								Log.trace("*** CONTINUING BURST, SO FAR: ***");
+								printBurst(burst);
+								FnewBurstData = false;
 							}
-						} else {	
-							// publishing is OFF --> discard
-							Log.trace("*** DISCARDING BURST because publishing is OFF ***");
-						}
-
-						// clear?
-						if (clear) {
-							if (Log.isTraceEnabled()) {
-								Log.print(burst.toJSON().c_str());
-								Log.print("\n");
-							}
-							FburstData.clear();
-							FminTime = 0;
+							FburstTimer.start(particleSystem().publishing.bursts.timerMS);
 						}
 					};
 
@@ -789,17 +808,29 @@ class TparticleSpike{
 				/**
 				 * @brief add variant data to the current burst
 				 */
-				void addToBurst(Tdescr* _d, system_tick_t _time, const Variant& _data) {
+				void addToBurst(Tdescr* _d, system_tick_t _time, const Variant& _data, bool _always = false) {
 					// safety check
 					if (_d == nullptr) return; 
 					
 					// need to complete startup
-					if (particleSystem().startup != TstartuStatus::e::complete) return;
+					if (particleSystem().startup != TstartupStatus::e::complete) return;
+
+					// debug info
+					#ifdef SDDS_PARTICLE_DEBUG
+						if (!_always && particleSystem().publishing.publish != TonOff::e::ON)
+							Log.trace("NOT adding to burst: %s", _data.toJSON().c_str());
+						else
+							Log.trace("ADDING to burst: %s", _data.toJSON().c_str());
+					#endif
+
+					// publish needs to be active or these data need to be set to always
+					if (!_always && particleSystem().publishing.publish != TonOff::e::ON) return;
 
 					// keep track of min time
 					if (FminTime == 0 || FminTime > _time) FminTime = _time;
 
 					// add to existing burst data for this variable
+					FnewBurstData = true;
 					for (size_t i = 0; i < FburstData.size(); ++i) {
 						if (FburstData[i].FdescrPtr == _d){
 							FburstData[i].Fdataset.push_back({_time, _data});
@@ -818,15 +849,8 @@ class TparticleSpike{
 				/**
 				 * @brief burst publish the current value of Tdescr
 				 */
-				void addToBurst(Tdescr* _d, system_tick_t _time) {
-					addToBurst(_d, _time, TparticleSerializer::serializeData(_d));
-				}
-
-				/**
-				 * @brief check if we're ready to publish (need a name and valid time)
-				 */
-				bool readyToPublish() {
-					return particleSystem().name != "" && Time.isValid();
+				void addToBurst(Tdescr* _d, system_tick_t _time, bool _always = false) {
+					addToBurst(_d, _time, TparticleSerializer::serializeData(_d), _always);
 				}
 
 		} 
@@ -894,7 +918,7 @@ class TparticleSpike{
 					// call back for origin value change
 					ForiginCbw = [this](void* _ctx){ 
 						// only start collecting values once startup is complete
-						if (particleSystem().startup == TstartuStatus::e::complete) {
+						if (particleSystem().startup == TstartupStatus::e::complete) {
 							if (Fvalue == publish::ALWAYS) {
 								// publish current variable value immediately
 								if (Fpublisher) {
@@ -916,10 +940,10 @@ class TparticleSpike{
 						Ftimer.stop();
 						reset();
 						
-						// no publishing
+						// no publishing for this variable
 						if (Fvalue == publish::OFF) return;
 						
-						// add publich callback
+						// add publish callback
 						FvarOrigin->callbacks()->addCbw(ForiginCbw);
 
 						// if Fvalue is set > ALWAYS --> start own timer
@@ -1184,7 +1208,7 @@ class TparticleSpike{
 						if (!is_in_dtypes) continue;
 					}
 					// opts filter and dtypes filter didn't throw us out --> set interval to the provided default
-					pvw->Fvalue = _default;
+					pvw->__setValue(_default);
 				}
 			}
 		}
@@ -1214,7 +1238,7 @@ class TparticleSpike{
 					TparticleVarWrapper* pvw = static_cast<TparticleVarWrapper*>(d);
 					if (pvw->origin() == _var) {
 						// found the matching wrapper
-						pvw->Fvalue = _interval;
+						pvw->__setValue(_interval);
 						return true;
 					}
 				}
@@ -1492,11 +1516,10 @@ class TparticleSpike{
 			// startup complete
 			on(particleSystem().state.time) {
 				// the state is loaded from EEPROM, this completes the startup
-				if (particleSystem().startup != TstartuStatus::e::complete) {
-					particleSystem().startup = TstartuStatus::e::complete;
-					// note: same as with state.error below, this is NOT sent to the cloud if it's after a user reset
-					// because the device goes back to default publish (NO)
-					Fpublisher.addToBurst(&particleSystem().vitals.lastRestart, millis());
+				if (particleSystem().startup != TstartupStatus::e::complete) {
+					particleSystem().startup = TstartupStatus::e::complete;
+					// --> always publish restart
+					Fpublisher.addToBurst(&particleSystem().vitals.lastRestart, millis(), true);
 				}
 			};
 
@@ -1504,12 +1527,8 @@ class TparticleSpike{
 			on(particleSystem().state.error) {
 				if (particleSystem().state.error != TparamError::e::___) {
 					// encountered an error when loading system state from EEPROM
-					Fpublisher.addToBurst(&particleSystem().state.error, millis());
-					// FIXME: how should this really be handled? if state didn't load the device has no
-					// way of knowing whether it should publish this issue, worst case scenario
-					// noone realizes it had a restart that lead to a state loading problem
-					// MAYBE: force a publish of this and the restart too? i.e. allow flagging 
-					// a burst for publish irrespective of publishing::publish value?
+					// --> always publish this information
+					Fpublisher.addToBurst(&particleSystem().state.error, millis(), true);
 				}
 			};
 
