@@ -6,26 +6,21 @@
 #include "uPlainCommHandler.h"
 #include "uParticleSystem.h"
 
-// define the publishing interval constants
-namespace sdds{
-
-	namespace particle {
-
-		enum publish {
-			GLOBAL = -1,
-			OFF = 0,
-			ALWAYS = 1
-		};
-	};
-}
-
 // particle spike class
 class TparticleSpike{
 
+	public:
+
+		// define the publishing interval constants
+		enum publish {
+			INHERIT = -1,
+			OFF = 0,
+			IMMEDIATELY = 1
+		};	
+
 	private:
 
-		// namespaces
-		using publish = sdds::particle::publish;
+		// namespace
 		using TonOff = sdds::enums::OnOff;
 
 		/*** particle serializer (to Variants)  ***/
@@ -919,7 +914,7 @@ class TparticleSpike{
 					ForiginCbw = [this](void* _ctx){ 
 						// only start collecting values once startup is complete
 						if (particleSystem().startup == TparticleSystem::TstartupStatus::e::complete) {
-							if (Fvalue == publish::ALWAYS) {
+							if (Fvalue == publish::IMMEDIATELY) {
 								// publish current variable value immediately
 								if (Fpublisher) {
 									Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit));
@@ -946,8 +941,8 @@ class TparticleSpike{
 						// add publish callback
 						FvarOrigin->callbacks()->addCbw(ForiginCbw);
 
-						// if Fvalue is set > ALWAYS --> start own timer
-						if (Fvalue > publish::ALWAYS) {
+						// if Fvalue is set > IMMEDIATELY --> start own timer
+						if (Fvalue > publish::IMMEDIATELY) {
 							if (Fvalue < 1000) Fvalue = 1000; // min interval is 1 second
 							Ftimer.start(Fvalue);
 						}
@@ -980,7 +975,7 @@ class TparticleSpike{
 				 * @brief does this use the global publishing interval?
 				 */
 				bool usesGlobalPublishingInterval() {
-					return (Fvalue == publish::GLOBAL);
+					return (Fvalue == publish::INHERIT);
 				}
 
 				/**
@@ -1217,9 +1212,9 @@ class TparticleSpike{
 		 * @brief set variable interval for a specific variable
 		 * @param _var variable pointer
 		 * @param _interval interval value to set
-		 * sdds::particle::publish::GLOBAL		-> use the globalPublishInterval
+		 * sdds::particle::publish::INHERIT		-> use the globalPublishInterval
 		 * sdds::particle::publish::OFF 		-> no publishes (initial default)
-		 * sdds::particle::publish::ALWAYS 		-> publish on change
+		 * sdds::particle::publish::IMMEDIATELY -> publish every time the value is set
 		 * < 1000 	-> not allowed
 		 * 1000+ 	-> publish every 1000+ ms
 		 * @return whether _var was found in any of the variable intervals' origin
@@ -1554,8 +1549,8 @@ class TparticleSpike{
 				} else if (particleSystem().debug == TparticleSystem::TdebugAction::e::setDefaults) {
 					setupDefaults(
 						{
-							{publish::ALWAYS, sdds::opt::saveval},
-            				{publish::GLOBAL, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}}
+							{publish::IMMEDIATELY, sdds::opt::saveval},
+            				{publish::INHERIT, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}}
 						}
 					);
 				}

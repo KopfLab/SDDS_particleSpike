@@ -72,16 +72,16 @@ static TparticleSpike particleSpike(
 
 void setup(){
     // setup particle communication
-    using publish = sdds::particle::publish;
+    using publish = TparticleSpike::publish;
     particleSpike.setup(
         // set default publishing intervals for anything that should be different from publish::OFF
         {
             // --> all variables that are stored in EEPROM (saveeval option) should report all changes
-            {publish::ALWAYS, sdds::opt::saveval},
+            {publish::IMMEDIATELY, sdds::opt::saveval},
             // --> all floats should inherit from the globalInterval (regardless of whether they are saved or not)
-            {publish::GLOBAL, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}},
+            {publish::INHERIT, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}},
             // --> for this particular class, the ledSwitch should also inherit from globalInterval
-            {publish::GLOBAL, &userStruct.led.ledSwitch}
+            {publish::INHERIT, &userStruct.led.ledSwitch}
         }
     );
 }
