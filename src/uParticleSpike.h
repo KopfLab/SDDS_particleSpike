@@ -939,7 +939,7 @@ class TparticleSpike{
 						if (Fvalue == publish::OFF) return;
 						
 						// add publish callback
-						FvarOrigin->callbacks()->addCbw(ForiginCbw);
+						FvarOrigin->callbacks()->push_first(&ForiginCbw);
 
 						// if Fvalue is set > IMMEDIATELY --> start own timer
 						if (Fvalue > publish::IMMEDIATELY) {
