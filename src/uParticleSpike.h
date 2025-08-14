@@ -813,9 +813,9 @@ class TparticleSpike{
 					// debug info
 					#ifdef SDDS_PARTICLE_DEBUG
 						if (!_always && particleSystem().publishing.publish != TonOff::e::ON)
-							Log.trace("NOT adding to burst: %s", _data.toJSON().c_str());
+							Log.trace("NOT adding to burst for %s: %s", TparticleSerializer::getVarPath(_d).c_str(), _data.toJSON().c_str());
 						else
-							Log.trace("ADDING to burst: %s", _data.toJSON().c_str());
+							Log.trace("ADDING to burst for %s: %s", TparticleSerializer::getVarPath(_d).c_str(), _data.toJSON().c_str());
 					#endif
 
 					// publish needs to be active or these data need to be set to always
@@ -882,22 +882,36 @@ class TparticleSpike{
 		};
 
 		/**
-		 * @brief keeps track of the publish intervals, see setVariableInterval
-		 * 
+		 * @brief keeps track of the publish intervals (see setVariableInterval), provides access to the original sdds var, and defines the reset() and publish() methods
 		 */
 		class TparticleVarWrapper : public Tint32 {
 			private:
+				// timer and callback wrappers
 				Ttimer Ftimer;
 				TcallbackWrapper FintervalCbw{this};
 				TcallbackWrapper ForiginCbw{this};
+
 			protected:
+
+				// origin
 				Tdescr* FvarOrigin = nullptr;
 				Tdescr* FlinkedUnit = nullptr;
+
+				// previous value
+				bool FhasPreviousValue = false;
+				virtual void setPreviousValue() = 0;
+				virtual bool isValueDifferent() = 0;
+
+				// publishing
 				TparticlePublisher* Fpublisher = nullptr;
 				system_tick_t FlastUpdateTime = 0;
-				// override in derived classes
 				virtual void clear() {}
-				virtual void changeValue(){}
+				virtual void changeValue(){
+					if (!FhasPreviousValue || isValueDifferent()) {
+						// by default, only update if the value is different
+						FlastUpdateTime = millis();
+					}
+				}
 				virtual system_tick_t getTimeForPublish() {
 					// default is the last update time
 					return FlastUpdateTime;
@@ -906,6 +920,7 @@ class TparticleSpike{
 					// default is just the value of the variable
 					return TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit);	
 				}
+
 			public:
 				TparticleVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : FvarOrigin(_voi), Fpublisher(_pub), FlinkedUnit(_unit) {
 					Fvalue = publish::OFF;
@@ -915,21 +930,23 @@ class TparticleSpike{
 						// only start collecting values once startup is complete
 						if (particleSystem().startup == TparticleSystem::TstartupStatus::e::complete) {
 							if (Fvalue == publish::IMMEDIATELY) {
-								// publish current variable value immediately
-								if (Fpublisher) {
+								// publish current variable value immediately if it has changed
+								if ((!FhasPreviousValue || isValueDifferent()) && Fpublisher) {
 									Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit));
 								}
 							} else {
 								// collect values
-								FlastUpdateTime = millis();
-								changeValue(); // note: always triggers, even if value hasn't actually changed (i.e. set to the same it already is)
+								changeValue(); 
 							}
 						}
+						// keep track of previous value
+						setPreviousValue();
+						if (!FhasPreviousValue) FhasPreviousValue = true;
 					};
 
 					// call back for the publish interval changing
 					FintervalCbw = [this](void* _ctx){ 
-				
+
 						// reset callback, timer and values
 						FvarOrigin->callbacks()->remove(&ForiginCbw);
 						Ftimer.stop();
@@ -957,12 +974,24 @@ class TparticleSpike{
 						Ftimer.start(Fvalue);
 					};
 				}
-				Tdescr* origin(){ return FvarOrigin; } 
-				Tmeta meta() override { return Tmeta{Tuint32::TYPE_ID, sdds::opt::saveval, FvarOrigin->name()}; }
+
+				// setting the interval values
 				void operator=(Tuint32::dtype _v) { __setValue(_v); }
 				template <typename T>
 				void operator=(T _val) { __setValue(_val); }
+
+				// original sdds var access
+				Tdescr* origin(){ return FvarOrigin; } 
+				Tmeta meta() override { return Tmeta{Tuint32::TYPE_ID, sdds::opt::saveval, FvarOrigin->name()}; }
 				
+				/**
+				 * @brief does this use the global publishing interval?
+				 */
+				bool usesGlobalPublishingInterval() {
+					return (Fvalue == publish::INHERIT);
+				}
+
+				// methods implemented in derived classes
 				/**
 				 * @brief reset the data storage
 				 */
@@ -972,16 +1001,9 @@ class TparticleSpike{
 				}
 
 				/**
-				 * @brief does this use the global publishing interval?
-				 */
-				bool usesGlobalPublishingInterval() {
-					return (Fvalue == publish::INHERIT);
-				}
-
-				/**
 				 * @brief adds to the burst of the publisher if any data is stored
 				 */
-				void publish(){
+				void publish() {
 					if (FlastUpdateTime == 0) return; // has no recent value
 					if (Fpublisher) {
 						Fpublisher->addToBurst(FvarOrigin, getTimeForPublish(), getDataForPublish());
@@ -991,14 +1013,75 @@ class TparticleSpike{
 		};
 
 		/**
-		 * @brief variable wrapper for averaging numeric data
+		 * @brief wrapper for string SDDS vars
+		 */
+		class TparticleStringVarWrapper : public TparticleVarWrapper {
+
+			private:
+
+				dtypes::string FpreviousValue;
+
+			protected:
+
+				dtypes::string originValue() { 
+					return (static_cast<Tstring*>(origin())->Fvalue);
+				}
+
+				void setPreviousValue() override {
+					FpreviousValue = originValue();
+				}
+
+				bool isValueDifferent() override {
+					return (FpreviousValue != originValue());
+				}	
+
+			public: 
+
+				TparticleStringVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : TparticleVarWrapper(_voi, _pub, _unit) {
+				}
+
+		};
+
+		/**
+		 * @brief wrapper for enum SDDS vars
+		 */
+		class TparticleEnumVarWrapper : public TparticleVarWrapper {
+
+			private:
+
+				dtypes::uint8 FpreviousValue;
+
+			protected:
+
+				dtypes::uint8 originValue() { 
+					return (*static_cast<dtypes::uint8*>(static_cast<TenumBase*>(origin())->pValue()));
+				}
+
+				void setPreviousValue() override {
+					FpreviousValue = originValue();
+				}
+
+				bool isValueDifferent() override {
+					return (FpreviousValue != originValue());
+				}	
+
+			public: 
+
+				TparticleEnumVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : TparticleVarWrapper(_voi, _pub, _unit) {
+				}
+
+		};
+		
+		/**
+		 * @brief wrapper for numeric SDDS vars (includes averaging if not set to immediate publish)
 		 * note that this still publishes the original numeric data format (e.g. int) if it's 
 		 * immediate publish (=1) but any averaging even of ints will turn them to doubles
 		 * for numerical accuracy - in the end it doesn't really make a difference in the 
 		 * resulting JSON though
 		 */
 		template<class sdds_dtype>
-		class TparticleAveragingVarWrapper : public TparticleVarWrapper {
+		class TparticleNumericVarWrapper : public TparticleVarWrapper {
+
 			private:
 
 				// running stats variables
@@ -1056,7 +1139,7 @@ class TparticleSpike{
 						add(FlatestValue, millis() - FlatestTime);
 					}
 					// set latest time and value
-					FlatestValue = static_cast<dtypes::float64>(typedVoi()->Fvalue);
+					FlatestValue = static_cast<dtypes::float64>(this->originValue());
 					FlatestTime = millis();
 				}
 
@@ -1070,7 +1153,20 @@ class TparticleSpike{
 				}
 
 			protected:
-				sdds_dtype* typedVoi(){ return static_cast<sdds_dtype*>(this->FvarOrigin); } 
+
+				// origin value changes
+				typedef typename sdds_dtype::dtype value_dtype;
+				value_dtype FpreviousValue;
+				sdds_dtype* typedOrigin(){ return static_cast<sdds_dtype*>(origin()); } 
+				value_dtype originValue() { return typedOrigin()->Fvalue; }
+
+				void setPreviousValue() override {
+					FpreviousValue = originValue();
+				}
+
+				bool isValueDifferent() override {
+					return (FpreviousValue != originValue());
+				}
 
 				void clear () override {
 					// more than one data point --> start with latest (i.e. have a changeValue right away)
@@ -1084,9 +1180,11 @@ class TparticleSpike{
 				}
 
 				void changeValue() override{
+					// always triggers update for continuously collected values even if value is the same
+					this->FlastUpdateTime = millis();
 					Fcount++;
 					// first value
-					if (Fcount == 1) FstartTime = millis();
+					if (Fcount == 1) FstartTime = this->FlastUpdateTime;
 					addLatest();
 				}
 
@@ -1103,17 +1201,17 @@ class TparticleSpike{
 				Variant getDataForPublish() override {
 					if (Fcount == 1) {
 						// single point -> return latest value
-						return TparticleSerializer::serializeData(FlatestValue, FlinkedUnit);	
+						return TparticleSerializer::serializeData(FlatestValue, this->FlinkedUnit);	
 					} else {
 						// multi point -> add the value of the currently active data point before returning
 						// note: this does NOT increase the data point count, we're just finishing the calculation
 						addLatest();
-						return TparticleSerializer::serializeData(Fcount, FrunningM, stdDev(), FlinkedUnit);	
+						return TparticleSerializer::serializeData(Fcount, FrunningM, stdDev(), this->FlinkedUnit);	
 					}
 				}
 
 			public:
-				TparticleAveragingVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : TparticleVarWrapper(_voi, _pub, _unit) {
+				TparticleNumericVarWrapper(Tdescr* _voi, TparticlePublisher* _pub, Tdescr* _unit) : TparticleVarWrapper(_voi, _pub, _unit) {
 				}
 		};
 
@@ -1131,26 +1229,32 @@ class TparticleSpike{
 					linkedUnit = d->next();
 				}
 	
-				// averaging wrappers for the numeric data types
 				auto dt = d->type();
-				if (dt == sdds::Ttype::UINT8)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint8>(d, &Fpublisher, linkedUnit));
+				// string wrapper
+				if (dt == sdds::Ttype::STRING)
+					_dst->addDescr(new TparticleStringVarWrapper(d, &Fpublisher, linkedUnit));
+				// enum wrapper
+				else if (dt == sdds::Ttype::ENUM)
+					_dst->addDescr(new TparticleEnumVarWrapper(d, &Fpublisher, linkedUnit));
+				// numeric wrappers
+				else if (dt == sdds::Ttype::UINT8)
+					_dst->addDescr(new TparticleNumericVarWrapper<Tuint8>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::UINT16)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint16>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tuint16>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::UINT32)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tuint32>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tuint32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::INT8)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tint8>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tint8>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::INT16)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tint16>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tint16>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::INT32)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tint32>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tint32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::FLOAT32)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tfloat32>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tfloat32>(d, &Fpublisher, linkedUnit));
 				else if (dt == sdds::Ttype::FLOAT64)
-					_dst->addDescr(new TparticleAveragingVarWrapper<Tfloat64>(d, &Fpublisher, linkedUnit));
+					_dst->addDescr(new TparticleNumericVarWrapper<Tfloat64>(d, &Fpublisher, linkedUnit));
+				// recursive through structure
 				else if (dt == sdds::Ttype::STRUCT){
-					// recursive structure
 					TmenuHandle* mh = static_cast<Tstruct*>(d)->value();
 					if (mh){
 						TmenuHandle* nextLevel = new TnamedMenuHandle(d->name());
@@ -1158,8 +1262,7 @@ class TparticleSpike{
 						createVariableIntervalsTree(mh,nextLevel);
 					} 
 				} else {
-					// non-averaging for everything else (enum, string)
-					_dst->addDescr(new TparticleVarWrapper(d, &Fpublisher, linkedUnit));
+					// FIXME: is anything else supported?
 				}
 
 			}
@@ -1442,10 +1545,15 @@ class TparticleSpike{
 
 		#pragma endregion
 
-	public:
-
 		/*** constructor and setup ***/
 		#pragma region constructor+setup
+
+	private:
+
+		// keep track of publishing to detect when it switches from OFF to ON
+		bool FisPublishing = particleSystem().publishing.publish == TonOff::e::ON;
+
+	public:
 
 		/**
 		 * @brief particle spike consturctor
@@ -1493,13 +1601,13 @@ class TparticleSpike{
 
 			// (re)start timer when publishing is turned on
 			on(particleSystem().publishing.publish) {
-				// Q: should this only trigger if it is _changed_ to ON?
-				// (currently this triggers every time it's set even if it's already ON)
-				if (particleSystem().publishing.publish == TonOff::e::ON) {
+				// triggers only if publishing is freshly turned on
+				if (!FisPublishing && particleSystem().publishing.publish == TonOff::e::ON) {
 					FglobalPublishTimer.stop();
 					resetGlobal();
 					FglobalPublishTimer.start(particleSystem().publishing.globalIntervalMS);
 				}
+				FisPublishing = particleSystem().publishing.publish == TonOff::e::ON;
 			};
 
 			// publish timer triggers
