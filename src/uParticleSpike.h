@@ -899,7 +899,7 @@ class TparticleSpike{
 
 				// previous value
 				bool FhasPreviousValue = false;
-				virtual void setPreviousValue() = 0;
+				virtual void storePreviousValue() = 0;
 				virtual bool isValueDifferent() = 0;
 
 				// publishing
@@ -940,7 +940,7 @@ class TparticleSpike{
 							}
 						}
 						// keep track of previous value
-						setPreviousValue();
+						storePreviousValue();
 						if (!FhasPreviousValue) FhasPreviousValue = true;
 					};
 
@@ -1027,7 +1027,7 @@ class TparticleSpike{
 					return (static_cast<Tstring*>(origin())->Fvalue);
 				}
 
-				void setPreviousValue() override {
+				void storePreviousValue() override {
 					FpreviousValue = originValue();
 				}
 
@@ -1057,7 +1057,7 @@ class TparticleSpike{
 					return (*static_cast<dtypes::uint8*>(static_cast<TenumBase*>(origin())->pValue()));
 				}
 
-				void setPreviousValue() override {
+				void storePreviousValue() override {
 					FpreviousValue = originValue();
 				}
 
@@ -1160,7 +1160,7 @@ class TparticleSpike{
 				sdds_dtype* typedOrigin(){ return static_cast<sdds_dtype*>(origin()); } 
 				value_dtype originValue() { return typedOrigin()->Fvalue; }
 
-				void setPreviousValue() override {
+				void storePreviousValue() override {
 					FpreviousValue = originValue();
 				}
 
