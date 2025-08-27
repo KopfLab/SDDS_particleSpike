@@ -44,7 +44,7 @@ class TparticleSystem : public TmenuHandle {
         sdds_var(TstartupStatus,startup,sdds::opt::readonly) // keeps track of startup processes
 
         sdds_enum(connecting, connected, disconnected) TinternetStatus;
-        sdds_var(TinternetStatus,internet,sdds::opt::readonly,TinternetStatus::e::connecting) // internet status
+        sdds_var(TinternetStatus,internet,sdds::opt::readonly,TinternetStatus::connecting) // internet status
         sdds_var(TparamSaveMenu,state) // load/save state
 
         // vitals variables
@@ -56,7 +56,7 @@ class TparticleSystem : public TmenuHandle {
                 sdds_var(Tstring,mac, sdds::opt::readonly) // wifi network - can get this from device list
                 sdds_var(Tstring,network, sdds::opt::readonly) // wifi network - can get this from device vitals
                 sdds_var(Tuint8,signal, sdds::opt::readonly) // wifi signal strength - can get this from device vitals
-                sdds_var(TresetStatus,lastRestart,sdds::opt::readonly,TresetStatus::e::nominal) // reset information
+                sdds_var(TresetStatus,lastRestart,sdds::opt::readonly,TresetStatus::nominal) // reset information
 
                 // random access memory (RAM, in bytes)
                 #if (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_BORON)
@@ -101,7 +101,7 @@ class TparticleSystem : public TmenuHandle {
             };
 
             public:
-                sdds_var(TonOff, publish, sdds::opt::saveval,TonOff::e::OFF) // global on/off for publishing to the cloud
+                sdds_var(TonOff, publish, sdds::opt::saveval,TonOff::OFF) // global on/off for publishing to the cloud
                 sdds_var(Tstring, event, sdds::opt::saveval, "sddsData") // publish event name
                 sdds_var(Tbursts, bursts) // burst information
                 sdds_var(Tuint32, globalIntervalMS, sdds::opt::saveval, 1000 * 60 * 10) // global publish interval
@@ -180,28 +180,28 @@ class TparticleSystem : public TmenuHandle {
 			// system actions
 			on(action){
 				bool reset = true;
-				if (action==Taction::e::restart){
+				if (action==Taction::restart){
 					// user requests a restart
-					System.reset(static_cast<uint8_t>(TresetStatus::e::userRestart));
-                } else if (action==Taction::e::reset){
+					System.reset(static_cast<uint8_t>(TresetStatus::userRestart));
+                } else if (action==Taction::reset){
 					// user requests a restart
-					System.reset(static_cast<uint8_t>(TresetStatus::e::userReset));
-				} else if (action==Taction::e::disconnect && internet != TinternetStatus::e::disconnected) {
+					System.reset(static_cast<uint8_t>(TresetStatus::userReset));
+				} else if (action==Taction::disconnect && internet != TinternetStatus::disconnected) {
 					// user requests to disconnect
 					Log.trace("disconnecting from the cloud");
-					internet = TinternetStatus::e::disconnected;
+					internet = TinternetStatus::disconnected;
 					Particle.disconnect();
 					// note: this does NOT turn wifi/cellular modem off! 
 					// if that's intended (e.g. for power safe), see the restrictions about cellular sim card locks
 					// at https://docs.particle.io/reference/device-os/api/cellular/off/
-				} else if (action==Taction::e::reconnect && internet == TinternetStatus::e::disconnected) {
+				} else if (action==Taction::reconnect && internet == TinternetStatus::disconnected) {
 					// user requests to reconnect
 					Log.trace("reconnecting to the cloud");
-					internet = TinternetStatus::e::connecting;
+					internet = TinternetStatus::connecting;
 					Particle.connect();
-				} else if (action==Taction::e::syncTime) {
+				} else if (action==Taction::syncTime) {
                     FresyncSysTime = true;
-                } else if (action==Taction::e::sendVitals) {
+                } else if (action==Taction::sendVitals) {
                     // publish vitals to the cloud right now
                     Particle.publishVitals(particle::NOW);
                 } else {
@@ -209,7 +209,7 @@ class TparticleSystem : public TmenuHandle {
                     reset = false;
                 }
 
-				if (reset) action = Taction::e::___;
+				if (reset) action = Taction::___;
 			};
 
             // vitals publishing interval
@@ -229,15 +229,15 @@ class TparticleSystem : public TmenuHandle {
 						// not enough free memory to keep operating safely
                         // FIXME: should there be some sort of data dump of the queuedData first?
                         // probably good to put it onto the flash drive
-						System.reset(static_cast<uint8_t>(TresetStatus::e::outOfMemory));
+						System.reset(static_cast<uint8_t>(TresetStatus::outOfMemory));
 					}
 				}
                 
                 // check if connection status changed
-				if (internet == TinternetStatus::e::connecting && Particle.connected()) {
-				    internet = TinternetStatus::e::connected;
-				} else if (internet == TinternetStatus::e::connected && !Particle.connected()) {
-				    internet = TinternetStatus::e::connecting;
+				if (internet == TinternetStatus::connecting && Particle.connected()) {
+				    internet = TinternetStatus::connected;
+				} else if (internet == TinternetStatus::connected && !Particle.connected()) {
+				    internet = TinternetStatus::connecting;
 				}
                 
                 // check on wifi/cellular info
@@ -296,7 +296,7 @@ class TparticleSystem : public TmenuHandle {
         void captureName(const char *topic, const char *data) {
             if (strcmp(data, name) != 0) {
                 name = data;
-                state.action = TenLoadSave::e::save;
+                state.action = TenLoadSave::save;
             }
         }
 
