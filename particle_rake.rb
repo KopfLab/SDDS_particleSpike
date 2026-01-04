@@ -22,11 +22,11 @@ require 'digest'
 # recommended versions
 # see https://docs.particle.io/reference/product-lifecycle/long-term-support-lts-releases/
 @versions ||= {
-  'p2' => '6.3.2',      # not LTS but required for CloudEvent
+  'p2' => '6.3.4',      # not LTS but required for CloudEvent
   'photon' => '2.3.1',  # LTS
   'argon' => '4.2.0',   # LTS
-  'boron' => '6.3.2',   # not LTS but required for CloudEvent
-  'msom' => '6.3.2'     # not LTS but required for CloudEvent
+  'boron' => '6.3.4',   # not LTS but required for CloudEvent
+  'msom' => '6.3.4'     # not LTS but required for CloudEvent
 }
 
 # constants
@@ -46,8 +46,10 @@ require 'digest'
 
 desc "compile binary in the cloud (default) or locally"
 task :compile do
+  # check for dev
+  dev = Rake.application.top_level_tasks.first == "dev"
   # check for local compile
-  local = Rake.application.top_level_tasks.first == "local"
+  local = dev == true || Rake.application.top_level_tasks.first == "local"
   # what program are we compiling?
   if local
     if Rake.application.top_level_tasks.length < 2
@@ -105,18 +107,35 @@ task :compile do
     lib_paths = lib_path.strip.split(/\s+/).map do |path|
       if Dir.exist?(File.join(path, @src_folder)) 
         File.join(path, @src_folder)
-      elsif Dir.exists?(File.join(@lib_folder, path, @src_folder)) 
+      elsif Dir.exist?(File.join(@lib_folder, path, @src_folder)) 
         File.join(@lib_folder, path, @src_folder)
+      elsif Dir.exist?(File.join(@lib_folder, path)) 
+        # looks like it's a library without a src directory -> take the parent directory
+        File.join(@lib_folder, path)
       else
         raise "Could not find '#{path}' library in root or #{@lib_folder} - make sure it exists"
       end
     end.compact
     lib_files = lib_paths.map { |path|
-      Dir.glob("#{path}/**/*.{h,c,cpp}") 
+       pattern =
+        if File.basename(path) == @src_folder
+          "#{path}/**/*.{h,c,cpp}"   # in a src directory --> recurse into subdirectories
+        else
+          "#{path}/*.{h,c,cpp}"     # not in a src directory --> only files directly in this directory
+        end
+      Dir.glob(pattern)
     }.flatten
     all_files = all_files + lib_files
     dest_files = dest_files + lib_files.map {
-      |path| File.join(@local_folder, @lib_folder, path.gsub("lib/", ""))
+      |path| 
+      parts = File.expand_path(path).split(File::SEPARATOR)
+      if parts.include?(@src_folder)
+        File.join(@local_folder, @lib_folder, path.gsub("lib/", ""))
+      else
+        dir  = File.dirname(path).gsub("lib/", "")
+        base = File.basename(path)
+        File.join(@local_folder, @lib_folder, dir, @src_folder, base)
+      end
     }
   end
 
@@ -162,7 +181,7 @@ task :compile do
         end
       else
         puts " - adding: #{target_path}"
-        unless Dir.exists?(File.dirname(target_path))
+        unless Dir.exist?(File.dirname(target_path))
           FileUtils.mkdir_p(File.dirname(target_path))
         end
         FileUtils.cp(source_path, target_path)
@@ -177,6 +196,11 @@ task :compile do
     puts "\nINFO: '#{@local_folder}' folder is ready"
     ENV['MAKE_LOCAL_PROGRAM'] = program
     Rake::Task[:compileLocal].invoke
+
+    # dev mode --> flash and start autocompile
+    if dev == true
+      sh "rake flash autoCompile autoFlash"
+    end
   else
     # compile in cloud
     sh "particle compile #{@platform} #{all_files.join(' ')} --target #{@version} --saveTo #{@bin_folder}/#{program}-#{@platform}-#{@version}-cloud.bin", verbose: false
@@ -186,7 +210,14 @@ end
 desc "flag compile to be done locally (rake local MYPROG)"
 task :local do
    if Rake.application.top_level_tasks.length < 2
-      raise "Error: compiling locally but no second task provided"
+      raise "Error: compiling locally but no program (second task) provided"
+    end
+end
+
+desc "flag to start development mode (rake dev MYPROG)"
+task :dev do
+   if Rake.application.top_level_tasks.length < 2
+      raise "Error: starting dev mode but no program (second task) provided"
     end
 end
 
@@ -211,12 +242,18 @@ task :makeLocal do
   # what program are we compiling?
   target = ENV['MAKE_LOCAL_TARGET']
   program = ENV['MAKE_LOCAL_PROGRAM'] || "local"
-  # info
-  puts "\nINFO: making '#{target}' in folder '#{@local_folder}' for #{program} #{@platform} #{@version} with local toolchain"
+  
+  # info (i.e. what are we doing?)
+  compiling = (target == "compile-user")
+  if compiling == true
+    puts "\nINFO: compiling #{program} #{@platform} #{@version} with local toolchain into folder '#{@local_folder}'"
+  else
+    puts "\nINFO: running '#{target}' in folder '#{@local_folder}'"
+  end
 
   # local folder
   local_root = File.expand_path(File.dirname(__FILE__)) + "/" + @local_folder
-  unless File.exist?("#{local_root}/src")
+  unless compiling == false || File.exist?("#{local_root}/src")
     raise "src directory in local folder '#{local_root}' not found"
   end
 
@@ -257,14 +294,17 @@ task :makeLocal do
     exit_status = wait_thr.value
     if exit_status.success?
       output_path = "#{local_root}/target/#{@platform}/#{@local_folder}.bin"
-      if File.exist?(output_path)
+      if compiling == true && File.exist?(output_path)
         bin_path = "#{@bin_folder}/#{program}-#{@platform}-#{@version}-local.bin"
         puts "INFO: saving bin in #{bin_path}"
         FileUtils.cp(output_path, bin_path)
       end
-    else
+    elsif compiling == true
       puts "\n*** COMPILE FAILED ***"
       puts "If you switched programs, platforms, or versions, you may need to clean: rake cleanLocal PLATFORM=#{@platform} VERSION=#{@version}\n\n"
+      raise "compile failed"
+    else
+      puts "\n*** MAKE FAILED (target: '#{target}') ***"
     end
   end
 end
@@ -312,9 +352,20 @@ task :flash do
     puts "\nINFO: flashing #{bin_path} to #{@device} via the cloud..."
     sh "particle flash #{@device} #{bin_path}"
   else
+    # get bin file firmware version
+    program, platform, version, local = File.basename(bin_path).split('-')
+    if version.nil? || version.empty?
+      raise "Binary file does not have a firmware version number: #{bin_path}"
+    end
+    # find serial device's firmware version
+    fw_version = `particle identify`.lines.find { |l| l.include?("firmware version") }&.split&.last
+    # check if versions match
+    if !fw_version.nil? && !fw_version.empty? && version != fw_version
+      raise "The binary file has a different firmware version (#{version}) than the connected device (#{fw_version}). Make sure to compile the binary for the device's version or update the device firmware: rake update VERSION=#{version}"
+    end
     puts "\nINFO: putting device into DFU mode"
     sh "particle usb dfu"
-    puts "INFO: flashing #{bin_path} over USB (requires device in DFU mode = yellow blinking)..."
+    puts "INFO: flashing #{bin_path} over USB to connected device which has matching firmware version #{fw_version} (requires device in DFU mode = yellow blinking)..."
     sh "particle flash --usb #{bin_path}"
   end
 end
@@ -393,5 +444,6 @@ desc "flash the tinker app"
 # commands: digitalWrite "D7,HIGH", analogWrite, digitalRead, analogRead "A0"
 task :tinker do
   puts "\nINFO: flashing tinker..."
+  sh "particle usb dfu"
   sh "particle flash --usb tinker"
 end

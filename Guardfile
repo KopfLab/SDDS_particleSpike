@@ -11,6 +11,8 @@
 # github compile- workflow file)
 # tldr; run:
 #   rake local PROGRAM flash autoCompile autoFlash
+# or simply (does the same as the above command):
+#   rake dev PROGRAM
 
 require 'yaml'
 
