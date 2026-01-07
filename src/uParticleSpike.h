@@ -1040,7 +1040,7 @@ private:
 
 	// auto-detection of unit vars
 	bool FunitAutoDetect;
-	dtypes::string FunitVarName;
+	dtypes::string FunitVarSuffix;
 
 	/**
 	 * @brief the container for the variables; interval menu
@@ -1453,9 +1453,9 @@ private:
 			if (!d)
 				continue;
 
-			// is there a linked unit?
+			// is there a linked unit? (i.e. next variable named the same but with the unit suffix)
 			Tdescr *linkedUnit = nullptr;
-			if (FunitAutoDetect && d->next() && d->next()->type() == sdds::Ttype::STRING && d->next()->name() == FunitVarName)
+			if (FunitAutoDetect && d->next() && d->next()->type() == sdds::Ttype::STRING && d->next()->name() == (d->name() + FunitVarSuffix))
 			{
 				linkedUnit = d->next();
 			}
@@ -1883,15 +1883,15 @@ public:
 	 * @param _root the sdds tree
 	 * @param _type name of the structure type, i.e. what kind of device is this? ("pump", "mfc", etc.)
 	 * @param _version version of the structure type to inform servers who have cached structure when the structure type has been updated
-	 * @param _unit name of unit vars for auto-detecting units (pass "" to turn auto-detection off)
+	 * @param _unit name of unit vars suffix for auto-detecting dynamic units (pass "" to turn auto-detection off)
 	 */
 	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, dtypes::uint16 _version, const dtypes::string &_unit) : Fpch(_root, nullptr)
 	{
 		Froot = _root;
 		particleSystem().type = _type;
 		particleSystem().version = _version;
-		FunitVarName = _unit;
-		FunitAutoDetect = FunitVarName != "";
+		FunitVarSuffix = _unit;
+		FunitAutoDetect = FunitVarSuffix != "";
 
 		// custom system actions
 		on(particleSystem().action)

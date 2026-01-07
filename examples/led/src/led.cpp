@@ -7,49 +7,58 @@
 #include "uMultask.h"
 
 // example LED menu handle
-class Tled : public TmenuHandle{
+class Tled : public TmenuHandle
+{
 
     using TonOff = sdds::enums::OnOff;
     Ttimer timer;
-    public:
 
-        sdds_var(TonOff,ledSwitch,sdds::opt::saveval)
-        sdds_var(TonOff,blinkSwitch,sdds::opt::saveval)
-        sdds_var(Tuint16,onTime,sdds::opt::saveval,500)
-        sdds_var(Tuint16,offTime,sdds::opt::saveval,500)
+public:
+    sdds_var(TonOff, ledSwitch, sdds::opt::saveval);
+    sdds_var(TonOff, blinkSwitch, sdds::opt::saveval);
+    sdds_var(Tuint16, onTime, sdds::opt::saveval, 500);
+    sdds_var(Tuint16, offTime, sdds::opt::saveval, 500);
 
-        Tled(){
-            pinMode(LED_BUILTIN, OUTPUT);
+    // some value and unit to record
+    sdds_var(Tuint16, value);
+    sdds_var(Tstring, valueUnit, sdds::opt::saveval, "ms");
 
-            on(ledSwitch){
-                (ledSwitch == TonOff::e::ON) ?
-                    digitalWrite(LED_BUILTIN, HIGH):
-                    digitalWrite(LED_BUILTIN, LOW);
-            };
+    Tled()
+    {
+        pinMode(LED_BUILTIN, OUTPUT);
 
-            on(blinkSwitch){
-                (blinkSwitch == TonOff::e::ON) ?
-                    timer.start(0):
-                    timer.stop();
-            };
+        on(ledSwitch)
+        {
+            (ledSwitch == TonOff::e::ON) ? digitalWrite(LED_BUILTIN, HIGH) : digitalWrite(LED_BUILTIN, LOW);
+        };
 
-            on(timer){
-                if (ledSwitch == TonOff::e::ON){
-                    ledSwitch = TonOff::e::OFF;
-                    timer.start(offTime);
-                } else {
-                    ledSwitch = TonOff::e::ON;
-                    timer.start(onTime);
-                }
-            };
-        }
+        on(blinkSwitch)
+        {
+            (blinkSwitch == TonOff::e::ON) ? timer.start(0) : timer.stop();
+        };
+
+        on(timer)
+        {
+            if (ledSwitch == TonOff::e::ON)
+            {
+                ledSwitch = TonOff::e::OFF;
+                timer.start(offTime);
+            }
+            else
+            {
+                ledSwitch = TonOff::e::ON;
+                timer.start(onTime);
+            }
+        };
+    }
 };
 
 // root structure
-class TuserStruct : public TmenuHandle{
-    public:
-        sdds_var(Tled,led)
-        TuserStruct(){}
+class TuserStruct : public TmenuHandle
+{
+public:
+    sdds_var(Tled, led)
+        TuserStruct() {}
 } userStruct;
 
 // serial spike for communication via serial
@@ -57,9 +66,10 @@ class TuserStruct : public TmenuHandle{
 TserialSpike serialSpike(userStruct, 115200);
 
 // log handler
-SerialLogHandler logHandler(LOG_LEVEL_INFO, { // Logging level for non-application messages
-    { "app", LOG_LEVEL_TRACE } // Logging level for application messages (i.e. debug mode)
-});
+SerialLogHandler logHandler(LOG_LEVEL_INFO, {
+                                                // Logging level for non-application messages
+                                                {"app", LOG_LEVEL_TRACE} // Logging level for application messages (i.e. debug mode)
+                                            });
 
 // particle spike for paritcle communication
 #include "uParticleSpike.h"
@@ -67,10 +77,11 @@ static TparticleSpike particleSpike(
     userStruct, // self-describing data structure (SDDS)
     "led",      // structure type name
     2,          // structure version
-    "unit"      // auto-detect sdds vars that represent the unit of the preceeding var
+    "Unit"      // auto-detect sdds vars' units based on this suffix
 );
 
-void setup(){
+void setup()
+{
     // setup particle communication
     using publish = TparticleSpike::publish;
     particleSpike.setup(
@@ -81,11 +92,10 @@ void setup(){
             // --> all floats should inherit from the globalInterval (regardless of whether they are saved or not)
             {publish::INHERIT, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}},
             // --> for this particular class, the ledSwitch should also inherit from globalInterval
-            {publish::INHERIT, &userStruct.led.ledSwitch}
-        }
-    );
+            {publish::INHERIT, &userStruct.led.ledSwitch}});
 }
 
-void loop(){
-  TtaskHandler::handleEvents();
+void loop()
+{
+    TtaskHandler::handleEvents();
 }
