@@ -2113,20 +2113,21 @@ public:
 			ps.save(Froot, &s);
 		}
 
-		// particle functions to publish tree and values to event stream
+		// main particle functions to interact with the the self-describing data-structure
+		Particle.function("sdds", &TparticleSpike::setVariables, this);
+
+		// convenience particle functions to publish tree and values to event stream (also possible via sdds "SYSTEM.publishing.publishNow=tree/values")
 		Particle.function("sddsPublishTree", &TparticleSpike::publishTree, this);
 		Particle.function("sddsPublishValues", &TparticleSpike::publishValues, this);
 
-		// if capturing publish events is not feasible, can also get tree and values via variables requests:
-		// particles variables to retrieve tree and values
+		// backup particle variables to get tree/values if capturing publish events is not feasible or the structure is too big:
 		Particle.variable("sddsGetTree", [this]()
 						  { return this->getTree(); });
 		Particle.variable("sddsGetValues", [this]()
 						  { return this->getValues(); });
 		FvarResp.registerChannels(); // return value channels
 
-		// particle functions to set variable and variable for logs
-		Particle.function("sddsSetVariables", &TparticleSpike::setVariables, this);
+		// convenience particle variable to get the command log
 		Particle.variable("sddsGetCommandLog", FcmdLog);
 	}
 
