@@ -22,9 +22,9 @@ jobs:
             lib: 'SDDS'
         # CHANGE platforms as needed
         platform: 
-          - {name: 'p2', version: '6.3.2'}
-          - {name: 'boron', version: '6.3.2'}
-          - {name: 'msom', version: '6.3.2'}
+          - {name: 'p2', version: '6.3.4'}
+          - {name: 'boron', version: '6.3.4'}
+          - {name: 'msom', version: '6.3.4'}
 
     # program name
     name: ${{ matrix.program.name }}-${{ matrix.platform.name }}-${{ matrix.platform.version }}

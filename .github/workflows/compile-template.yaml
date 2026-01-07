@@ -23,7 +23,7 @@ jobs:
             aux: 'src'
         # CHANGE platforms as needed
         platform: 
-          - {name: 'p2', version: '6.3.2'}
+          - {name: 'p2', version: '6.3.4'}
 
     # program name
     name: ${{ matrix.program.name }}-${{ matrix.platform.name }}-${{ matrix.platform.version }}
