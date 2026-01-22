@@ -1289,12 +1289,15 @@ private:
 	 * resulting JSON though
 	 */
 	template <class sdds_dtype>
-	class TparticleNumericVarWrapper : public TparticleVarWrapper, public TrunningStats
+	class TparticleNumericVarWrapper : public TparticleVarWrapper
 	{
 
 	private:
+		// keep track of data
+		TrunningStats rs;
+
 		// keeping track of time
-		bool FisFirstValue = true;
+		bool FhasFirstValue = false;
 		dtypes::TtickCount FstartTime = 0;	// start time of the averaged value
 		dtypes::TtickCount FlatestTime = 0; // last time a value was received
 		dtypes::float64 FlatestValue = 0;	// last value that was received
@@ -1308,7 +1311,7 @@ private:
 			// do we already have a value? --> add it to the running stats
 			if (FlatestTime > 0)
 			{
-				add(FlatestValue, millis() - FlatestTime);
+				rs.add(FlatestValue, millis() - FlatestTime);
 			}
 			// store the latest time and value
 			FlatestValue = static_cast<dtypes::float64>(this->originValue());
@@ -1335,11 +1338,11 @@ private:
 		void clear() override
 		{
 			// already have one data point stored in the running stats
-			// --> start next stats with FlatestValue, which is not part of the stats yet
-			bool carryOver = (count() > 0);
-			reset(); // reset running stats
+			// --> start next stats with FlatestValue
+			bool carryOver = (rs.count() > 0);
+			rs.reset(); // restart running stats
 			FlatestTime = 0;
-			FisFirstValue = true;
+			FhasFirstValue = false;
 			if (carryOver)
 				changeValue();
 		}
@@ -1349,9 +1352,9 @@ private:
 			// always triggers update for continuously collected values even if value is the same
 			this->FlastUpdateTime = millis();
 			// first value?
-			if (FisFirstValue)
+			if (!FhasFirstValue)
 			{
-				FisFirstValue = false;
+				FhasFirstValue = true;
 				FstartTime = this->FlastUpdateTime;
 			}
 			addLatest();
@@ -1359,9 +1362,9 @@ private:
 
 		system_tick_t getTimeForPublish() override
 		{
-			if (Fcount == 1)
+			if (rs.count() == 0)
 			{
-				// single point -> return single time
+				// single point (i.e. no stats yet) -> return single time
 				return FstartTime;
 			}
 			else
@@ -1373,22 +1376,21 @@ private:
 
 		Variant getDataForPublish() override
 		{
-			if (Fcount == 1)
+			if (rs.count() == 0)
 			{
-				// single point -> return latest value
+				// single point (i.e. no stats yet) -> return latest value
 				return TparticleSerializer::serializeData(FlatestValue, this->FlinkedUnit);
 			}
 			else
 			{
 				// multi point -> add the value of the currently active data point before returning
-				// note: this does NOT increase the data point count, we're just finishing the calculation
 				addLatest();
-				return TparticleSerializer::serializeData(count(), mean(), stdDev(), this->FlinkedUnit);
+				return TparticleSerializer::serializeData(rs.count(), rs.mean(), rs.stdDev(), this->FlinkedUnit);
 			}
 		}
 
 	public:
-		TparticleNumericVarWrapper(Tdescr *_voi, TparticlePublisher *_pub, Tdescr *_unit) : TparticleVarWrapper(_voi, _pub, _unit), TrunningStats()
+		TparticleNumericVarWrapper(Tdescr *_voi, TparticlePublisher *_pub, Tdescr *_unit) : TparticleVarWrapper(_voi, _pub, _unit)
 		{
 		}
 	};
