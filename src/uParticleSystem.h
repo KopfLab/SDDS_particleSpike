@@ -61,28 +61,28 @@ public:
 
 // random access memory (RAM, in bytes)
 #if (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_BORON)
-        sdds_var(Tuint32, totalRAM, sdds::opt::readonly, 80 * 1024); // approximately 80 KB
+        sdds_var(Tuint32, totalRAM_B, sdds::opt::readonly, 80 * 1024); // approximately 80 KB
 #elif (PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_MSOM)
-        sdds_var(Tuint32, totalRAM, sdds::opt::readonly, 3 * 1024 * 1024); // approximately 3 MB
+        sdds_var(Tuint32, totalRAM_byte, sdds::opt::readonly, 3 * 1024 * 1024); // approximately 3 MB
 #else
-        sdds_var(Tuint32, totalRAM, sdds::opt::readonly, 0);
+        sdds_var(Tuint32, totalRAM_byte, sdds::opt::readonly, 0);
 #endif
-        sdds_var(Tuint32, freeRAM, sdds::opt::readonly); // free memory information
+        sdds_var(Tuint32, freeRAM_byte, sdds::opt::readonly); // free memory information
 
         // flash memory (in bytes) / number of sectors
-        inline static const size_t flashSectorSize = 4 * 1024; // 4 KB
+        inline static const size_t flashSectorSize_byte = 4 * 1024; // 4 KB
 #if (PLATFORM_ID == PLATFORM_MSOM)
-        sdds_var(Tuint32, totalFlash, sdds::opt::readonly, 8 * 1024 * 1024); // 8 MB
+        sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 8 * 1024 * 1024); // 8 MB
         sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize);
 #elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
-        sdds_var(Tuint32, totalFlash, sdds::opt::readonly, 2 * 1024 * 1024); // 2 MB
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / flashSectorSize);
+        sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 2 * 1024 * 1024); // 2 MB
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / flashSectorSize_byte);
 #else
-        sdds_var(Tuint32, totalFlash, sdds::opt::readonly, 0);
+        sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 0);
         sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 0);
 #endif
-        sdds_var(Tuint32, freeFlash, sdds::opt::readonly);   // free flash (FIXME: not yet used)
-        sdds_var(Tuint32, freeSectors, sdds::opt::readonly); // free sectors (FIXME: not yet used)
+        sdds_var(Tuint32, freeFlash_byte, sdds::opt::readonly); // free flash (FIXME: not yet used)
+        sdds_var(Tuint32, freeSectors, sdds::opt::readonly);    // free sectors (FIXME: not yet used)
     };
     sdds_var(Tvitals, vitals);
 
@@ -249,10 +249,10 @@ public:
             Watchdog.refresh();
 
             // check if memory changed
-            if (vitals.freeRAM != System.freeMemory())
+            if (vitals.freeRAM_byte != System.freeMemory())
             {
-                vitals.freeRAM = System.freeMemory();
-                if (vitals.freeRAM < memoryRestartLimit)
+                vitals.freeRAM_byte = System.freeMemory();
+                if (vitals.freeRAM_byte < memoryRestartLimit)
                 {
                     // not enough free memory to keep operating safely
                     // FIXME: should there be some sort of data dump of the queuedData first?
