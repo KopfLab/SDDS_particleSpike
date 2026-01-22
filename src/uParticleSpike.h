@@ -5,6 +5,7 @@
 #include "uCoreEnums.h"
 #include "uPlainCommHandler.h"
 #include "uParticleSystem.h"
+#include "uRunningStats.h"
 
 // particle spike class
 class TparticleSpike
@@ -1288,55 +1289,15 @@ private:
 	 * resulting JSON though
 	 */
 	template <class sdds_dtype>
-	class TparticleNumericVarWrapper : public TparticleVarWrapper
+	class TparticleNumericVarWrapper : public TparticleVarWrapper, public TrunningStats
 	{
 
 	private:
-		// running stats variables
-		dtypes::uint32 Fcount = 0;	   // n: number of samples seen so far
-		dtypes::float64 FrunningM = 0; // M_k: running mean
-		dtypes::float64 FrunningT = 0; // T_k: sum of weighted squared deviations
-		dtypes::float64 FrunningW = 0; // W_k: accumulated weight
-
 		// keeping track of time
+		bool FisFirstValue = true;
 		dtypes::TtickCount FstartTime = 0;	// start time of the averaged value
 		dtypes::TtickCount FlatestTime = 0; // last time a value was received
 		dtypes::float64 FlatestValue = 0;	// last value that was received
-
-		/**
-		 * @brief add a value to the running average
-		 * numerically stable running stats for value averaging are based on the
-		 * West update of Welford's algorithm for weighted averages and variance.
-		 * for a detailed discussion and equations see the following publications
-		 * - West 1979: dl.acm.org/doi/10.1145/359146.359153
-		 * - Schubert & Gertz 2018: dl.acm.org/doi/10.1145/3221269.3223036
-		 * Sum of weights W:
-		 * W_k = W_{k-1} + w_k
-		 * Weighted mean M:
-		 * M_k = M_{k-1} + w_k / W_k * (x_k - M_{k-1})
-		 * Weighted squared deviation T:
-		 * T_k = T_{k-1} + w_k / W_k * (x_k - M_{k-1}) * (x_k - M_{k-1}) * W_{k-1}
-		 * Variance S2:
-		 * S2 = T_n * n/((n-1) * W_n)
-		 * Optimized computation (West 1979):
-		 * Q = x_k - M_{k-1}
-		 * TEMP = W_{k-1} + w_k
-		 * R = Q * w_k / TEMP
-		 * M = M + R
-		 * T = T + R * W_{k-1} * Q
-		 * W_k = TEMP
-		 * @param _x new value x_k
-		 * @param _w weight w_k of the new value x_k
-		 */
-		void add(dtypes::float64 _x, dtypes::float64 _w)
-		{
-			dtypes::float64 Q = _x - FrunningM;
-			dtypes::float64 TEMP = FrunningW + _w;
-			dtypes::float64 R = Q * _w / TEMP;
-			FrunningM += R;
-			FrunningT += R * FrunningW * Q;
-			FrunningW = TEMP;
-		}
 
 		/**
 		 * @brief add latest value to the running average with the weight based on the time interval
@@ -1344,25 +1305,14 @@ private:
 		 */
 		void addLatest()
 		{
-			// do we already have a value?
+			// do we already have a value? --> add it to the running stats
 			if (FlatestTime > 0)
 			{
 				add(FlatestValue, millis() - FlatestTime);
 			}
-			// set latest time and value
+			// store the latest time and value
 			FlatestValue = static_cast<dtypes::float64>(this->originValue());
 			FlatestTime = millis();
-		}
-
-		dtypes::float64 variance()
-		{
-			// sample variance (for population variance skip the -1)
-			return ((Fcount > 1 && FrunningW > 0) ? FrunningT * Fcount / ((Fcount - 1) * FrunningW) : std::numeric_limits<dtypes::float64>::quiet_NaN());
-		}
-
-		dtypes::float64 stdDev()
-		{
-			return sqrt(variance());
 		}
 
 	protected:
@@ -1384,13 +1334,12 @@ private:
 
 		void clear() override
 		{
-			// more than one data point --> start with latest (i.e. have a changeValue right away)
-			bool carryOver = (Fcount > 1);
-			Fcount = 0;
-			FrunningM = 0;
-			FrunningT = 0;
-			FrunningW = 0;
+			// already have one data point stored in the running stats
+			// --> start next stats with FlatestValue, which is not part of the stats yet
+			bool carryOver = (count() > 0);
+			reset(); // reset running stats
 			FlatestTime = 0;
+			FisFirstValue = true;
 			if (carryOver)
 				changeValue();
 		}
@@ -1399,10 +1348,12 @@ private:
 		{
 			// always triggers update for continuously collected values even if value is the same
 			this->FlastUpdateTime = millis();
-			Fcount++;
-			// first value
-			if (Fcount == 1)
+			// first value?
+			if (FisFirstValue)
+			{
+				FisFirstValue = false;
 				FstartTime = this->FlastUpdateTime;
+			}
 			addLatest();
 		}
 
@@ -1432,12 +1383,12 @@ private:
 				// multi point -> add the value of the currently active data point before returning
 				// note: this does NOT increase the data point count, we're just finishing the calculation
 				addLatest();
-				return TparticleSerializer::serializeData(Fcount, FrunningM, stdDev(), this->FlinkedUnit);
+				return TparticleSerializer::serializeData(count(), mean(), stdDev(), this->FlinkedUnit);
 			}
 		}
 
 	public:
-		TparticleNumericVarWrapper(Tdescr *_voi, TparticlePublisher *_pub, Tdescr *_unit) : TparticleVarWrapper(_voi, _pub, _unit)
+		TparticleNumericVarWrapper(Tdescr *_voi, TparticlePublisher *_pub, Tdescr *_unit) : TparticleVarWrapper(_voi, _pub, _unit), TrunningStats()
 		{
 		}
 	};
