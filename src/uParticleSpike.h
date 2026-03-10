@@ -12,7 +12,7 @@ class TparticleSpike
 {
 
 public:
-	// define the publishing interval constants
+	// define the publishing interval constants (not an sdds enum)
 	enum publish
 	{
 		INHERIT = -1,
@@ -119,21 +119,30 @@ private:
 				Tdescr *d = it.current();
 				if (d->isStruct())
 				{
+					// recursively serialize sub-structs
 					TmenuHandle *mh = static_cast<Tstruct *>(d)->value();
 					if (mh)
 						serializeEnums(mh, _enums, _ids);
 				}
-				if (d->type() == sdds::Ttype::ENUM)
+				else if (d->type() == sdds::Ttype::ENUM)
 				{
+					// check if this enumeration has already been serialized
 					TenumBase *en = static_cast<TenumBase *>(d);
 					sdds::metaTypes::TenumId uid = en->enumInfo().id;
+					bool alreadySerialized = false;
 					for (size_t i = 0; i < _ids.size(); ++i)
 					{
 						if (uid == _ids[i])
-							return; // already serialized this enum
+						{
+							alreadySerialized = true;
+							break;
+						}
 					}
+					if (alreadySerialized)
+						continue;
+
+					// new enum --> remember and serialize
 					_ids.append(uid);
-					// serialize this enumeration
 					Variant enumeration;
 					enumeration.append(uid);
 					Variant values;
@@ -252,7 +261,7 @@ private:
 			{
 				return Variant(_d->to_string().c_str());
 			}
-			return Variant(); // null
+			return Variant(); // NULL
 		}
 
 		/**
@@ -1178,13 +1187,13 @@ private:
 		}
 
 		// setting the interval values
-		void operator=(Tuint32::dtype _v) { __setValue(_v); }
+		void operator=(Tint32::dtype _v) { __setValue(_v); }
 		template <typename T>
 		void operator=(T _val) { __setValue(_val); }
 
 		// original sdds var access
 		Tdescr *origin() { return FvarOrigin; }
-		Tmeta meta() override { return Tmeta{Tuint32::TYPE_ID, sdds::opt::saveval, FvarOrigin->name()}; }
+		Tmeta meta() override { return Tmeta{Tint32::TYPE_ID, sdds::opt::saveval, FvarOrigin->name()}; }
 
 		/**
 		 * @brief does this use the global publishing interval?
@@ -2058,6 +2067,7 @@ public:
 		}
 
 		// reset state params?
+		// resetState = true; // DEBUG: force state reset
 		if (resetState)
 		{
 			sdds::paramSave::Tstream::INIT();
