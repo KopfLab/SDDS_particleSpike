@@ -17,7 +17,9 @@ public:
 	{
 		INHERIT = -1,
 		OFF = 0,
-		IMMEDIATELY = 1
+		IMMEDIATELY = 1, // if publishing is on
+		ALWAYS = 2,		 // even if publishing is off
+		MAX = ALWAYS	 // keep track of what the maximum defined value is
 	};
 
 private:
@@ -692,7 +694,7 @@ private:
 			{
 				Fchannel = _channel;
 				char variable[20];
-				snprintf(variable, sizeof(variable), "sddsChannel%c", TparticleSerializer::encodeIntToBase64(_channel));
+				snprintf(variable, sizeof(variable), "getSddsCh%c", TparticleSerializer::encodeIntToBase64(_channel));
 				Particle.variable(variable, [this]()
 								  { return this->retrieve(); });
 			}
@@ -1131,12 +1133,12 @@ private:
 				// only start collecting values once startup is complete
 				if (particleSystem().startup == TparticleSystem::TstartupStatus::complete)
 				{
-					if (Fvalue == publish::IMMEDIATELY)
+					if (Fvalue == publish::IMMEDIATELY || Fvalue == publish::ALWAYS)
 					{
 						// publish current variable value immediately if it has changed
 						if ((!FhasPreviousValue || isValueDifferent()) && Fpublisher)
 						{
-							Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit));
+							Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS);
 						}
 					}
 					else
@@ -1166,8 +1168,8 @@ private:
 				// add publish callback
 				FvarOrigin->callbacks()->push_first(&ForiginCbw);
 
-				// if Fvalue is set > IMMEDIATELY --> start own timer
-				if (Fvalue > publish::IMMEDIATELY)
+				// if Fvalue is set > MAX --> start own timer
+				if (Fvalue > publish::MAX)
 				{
 					if (Fvalue < 1000)
 						Fvalue = 1000; // min interval is 1 second
@@ -1477,7 +1479,7 @@ private:
 	 */
 	void setVariableIntervalsDefault(TmenuHandle *_vars, dtypes::int32 _default, int _optsFilter, const std::vector<sdds::Ttype> &_dtypes)
 	{
-		if (_default > 1 && _default < 1000)
+		if (_default > publish::MAX && _default < 1000)
 			_default = 1000; // min interval is 1 second
 		for (auto it = _vars->iterator(); it.hasCurrent(); it.jumpToNext())
 		{
@@ -1528,14 +1530,15 @@ private:
 	 * @param _interval interval value to set
 	 * sdds::particle::publish::INHERIT		-> use the globalPublishInterval
 	 * sdds::particle::publish::OFF 		-> no publishes (initial default)
-	 * sdds::particle::publish::IMMEDIATELY -> publish every time the value is set
+	 * sdds::particle::publish::IMMEDIATELY -> publish every time the value is set if publish is on
+	 * sdds::particle::publish::ALWAYS -> publish every time the value is set even if publish is not on
 	 * < 1000 	-> not allowed
 	 * 1000+ 	-> publish every 1000+ ms
 	 * @return whether _var was found in any of the variable intervals' origin
 	 */
 	bool setVariableInterval(TmenuHandle *_vars, dtypes::int32 _interval, Tdescr *_var)
 	{
-		if (_interval > 1 && _interval < 1000)
+		if (_interval > publish::MAX && _interval < 1000)
 			_interval = 1000; // min interval is 1 second
 		for (auto it = _vars->iterator(); it.hasCurrent(); it.jumpToNext())
 		{
@@ -1858,7 +1861,12 @@ public:
 		// custom system actions
 		on(particleSystem().action)
 		{
-			if (particleSystem().action == TparticleSystem::Taction::snapshotState)
+			if (particleSystem().action == TparticleSystem::Taction::___)
+			{
+				// do nothing
+				return;
+			}
+			else if (particleSystem().action == TparticleSystem::Taction::snapshotState)
 			{
 
 				// get snapshotState
@@ -1871,30 +1879,25 @@ public:
 					Log.print("\n");
 				}
 
-				Fpublisher.addToBurst(Froot, millis(), snapshotState);
-
-				// add all variables to burst that are saveval
+				// add all variables to burst that are saveval --> always do this if requested
+				Fpublisher.addToBurst(Froot, millis(), snapshotState, true);
 				particleSystem().action = TparticleSystem::Taction::___;
 			}
-		};
-
-		// publishw now actions
-		on(particleSystem().publishing.publishNow)
-		{
-			if (particleSystem().publishing.publishNow == TparticleSystem::Tpublishing::Taction::tree)
+			else if (particleSystem().action == TparticleSystem::Taction::sendSdds)
 			{
+
 				publishTree("");
-				particleSystem().publishing.publishNow = TparticleSystem::Tpublishing::Taction::___;
+				particleSystem().action = TparticleSystem::Taction::___;
 			}
-			else if (particleSystem().publishing.publishNow == TparticleSystem::Tpublishing::Taction::values)
+			else if (particleSystem().action == TparticleSystem::Taction::sendSddsValues)
 			{
 				publishValues("");
-				particleSystem().publishing.publishNow = TparticleSystem::Tpublishing::Taction::___;
+				particleSystem().action = TparticleSystem::Taction::___;
 			}
-			else if (particleSystem().publishing.publishNow == TparticleSystem::Tpublishing::Taction::bursts)
+			else if (particleSystem().action == TparticleSystem::Taction::sendBurstData)
 			{
 				// FIXME: implement this
-				particleSystem().publishing.publishNow = TparticleSystem::Tpublishing::Taction::___;
+				particleSystem().action = TparticleSystem::Taction::___;
 			}
 		};
 
@@ -1936,19 +1939,8 @@ public:
 			if (particleSystem().startup != TparticleSystem::TstartupStatus::complete)
 			{
 				particleSystem().startup = TparticleSystem::TstartupStatus::complete;
-				// --> always publish restart
-				Fpublisher.addToBurst(&particleSystem().vitals.lastRestart, millis(), true);
-			}
-		};
-
-		// system error
-		on(particleSystem().state.error)
-		{
-			if (particleSystem().state.error != TparamError::___)
-			{
-				// encountered an error when loading system state from EEPROM
-				// --> always publish this information
-				Fpublisher.addToBurst(&particleSystem().state.error, millis(), true);
+				// trigger publish for last restart info
+				particleSystem().vitals.lastRestart = particleSystem().vitals.lastRestart;
 			}
 		};
 
@@ -2015,6 +2007,13 @@ public:
 		// generate publishing intervals tree for all variables
 		createVariableIntervalsTree(Froot);
 
+		// set default defaults
+		setupDefaults(
+			{// --> device EEPROM load error should always be published
+			 {publish::ALWAYS, &particleSystem().state.error},
+			 // --> device restart should be always published
+			 {publish::ALWAYS, &particleSystem().vitals.lastRestart}});
+
 		// set defaults
 		setupDefaults(_defaults);
 
@@ -2079,19 +2078,19 @@ public:
 		// main particle functions to interact with the the self-describing data-structure
 		Particle.function("sdds", &TparticleSpike::setVariables, this);
 
-		// convenience particle functions to publish tree and values to event stream (also possible via sdds "SYSTEM.publishing.publishNow=tree/values")
-		Particle.function("sddsPublishTree", &TparticleSpike::publishTree, this);
-		Particle.function("sddsPublishValues", &TparticleSpike::publishValues, this);
+		// convenience particle functions to publish tree and values to event stream (also possible via sdds "SYSTEM.action=sendSdds/sendSddsValues")
+		Particle.function("sendSdds", &TparticleSpike::publishTree, this);
+		Particle.function("sendSddsValues", &TparticleSpike::publishValues, this);
 
 		// backup particle variables to get tree/values if capturing publish events is not feasible or the structure is too big:
-		Particle.variable("sddsGetTree", [this]()
+		Particle.variable("getSdds", [this]()
 						  { return this->getTree(); });
-		Particle.variable("sddsGetValues", [this]()
+		Particle.variable("getSddsValues", [this]()
 						  { return this->getValues(); });
 		FvarResp.registerChannels(); // return value channels
 
 		// convenience particle variable to get the command log
-		Particle.variable("sddsGetCommandLog", FcmdLog);
+		Particle.variable("getSddsCommandLog", FcmdLog);
 	}
 
 #pragma endregion

@@ -32,7 +32,11 @@ private:
     using TonOff = sdds::enums::OnOff;
 
 public:
-    // key structure type & version definitions
+    // action comes first
+    sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, sendSdds, sendSddsValues, sendBurstData, snapshotState) Taction;
+    sdds_var(Taction, action); // take a system action
+
+    // structure type & version definitions
     sdds_var(Tstring, type, sdds::opt::readonly);    // device type
     sdds_var(Tuint16, version, sdds::opt::readonly); // device version
 
@@ -104,21 +108,16 @@ public:
         };
 
     public:
-        sdds_enum(___, tree, values, bursts) Taction;
         sdds_var(TonOff, publish, sdds::opt::saveval, TonOff::OFF);               // global on/off for publishing to the cloud
         sdds_var(Tstring, event, sdds::opt::saveval, "sddsData");                 // publish event name
-        sdds_var(Taction, publishNow);                                            // take a publishing action
         sdds_var(Tbursts, bursts);                                                // burst information
         sdds_var(Tuint32, globalInterval_ms, sdds::opt::saveval, 1000 * 60 * 10); // global publish interval (in milliseconds)
     };
     sdds_var(Tpublishing, publishing);
 
-    sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, snapshotState) Taction;
-    sdds_var(Taction, action) // take a system action
-
 // debug tools
 #ifdef SDDS_PARTICLE_DEBUG
-        sdds_enum(___, getValues, getTree, getCommandLog, setVars, setDefaults) TdebugAction;
+    sdds_enum(___, getValues, getTree, getCommandLog, setVars, setDefaults) TdebugAction;
 sdds_var(TdebugAction, debug)  // debug actions
     sdds_var(Tstring, command) // debug actions
 #endif
@@ -189,26 +188,33 @@ public:
         // system actions
         on(action)
         {
-            bool reset = true;
-            if (action == Taction::restart)
+            if (action == Taction::___)
+            {
+                // do nothing
+                return;
+            }
+            else if (action == Taction::restart)
             {
                 // user requests a restart
                 System.reset(static_cast<uint8_t>(TresetStatus::userRestart));
+                action = Taction::___;
             }
             else if (action == Taction::reset)
             {
                 // user requests a restart
                 System.reset(static_cast<uint8_t>(TresetStatus::userReset));
+                action = Taction::___;
             }
             else if (action == Taction::disconnect && internet != TinternetStatus::disconnected)
             {
                 // user requests to disconnect
                 Log.trace("disconnecting from the cloud");
                 internet = TinternetStatus::disconnected;
-                Particle.disconnect();
                 // note: this does NOT turn wifi/cellular modem off!
                 // if that's intended (e.g. for power safe), see the restrictions about cellular sim card locks
                 // at https://docs.particle.io/reference/device-os/api/cellular/off/
+                Particle.disconnect();
+                action = Taction::___;
             }
             else if (action == Taction::reconnect && internet == TinternetStatus::disconnected)
             {
@@ -216,24 +222,19 @@ public:
                 Log.trace("reconnecting to the cloud");
                 internet = TinternetStatus::connecting;
                 Particle.connect();
+                action = Taction::___;
             }
             else if (action == Taction::syncTime)
             {
                 FresyncSysTime = true;
+                action = Taction::___;
             }
             else if (action == Taction::sendVitals)
             {
                 // publish vitals to the cloud right now
                 Particle.publishVitals(particle::NOW);
-            }
-            else
-            {
-                // skip reset
-                reset = false;
-            }
-
-            if (reset)
                 action = Taction::___;
+            }
         };
 
         // vitals publishing interval
