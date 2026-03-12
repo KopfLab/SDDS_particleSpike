@@ -1135,11 +1135,9 @@ private:
 				{
 					if (Fvalue == publish::IMMEDIATELY || Fvalue == publish::ALWAYS)
 					{
-						// publish current variable value immediately if it has changed
-						if ((!FhasPreviousValue || isValueDifferent()) && Fpublisher)
-						{
-							Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS);
-						}
+						// publish current variable value immediately (but only if it has changed!)
+						if (!FhasPreviousValue || isValueDifferent())
+							publish();
 					}
 					else
 					{
@@ -1216,16 +1214,29 @@ private:
 		}
 
 		/**
-		 * @brief adds to the burst of the publisher if any data is stored
+		 * @brief adds to the burst of the publisher
 		 */
 		void publish()
 		{
-			if (FlastUpdateTime == 0)
-				return; // has no recent value
-			if (Fpublisher)
+			// is publishing off for this variable? --> stop
+			if (Fvalue == publish::OFF)
+				return;
+
+			// is publishing immediate or always? --> publish current value (whatever it is)
+			if (Fvalue == publish::IMMEDIATELY || Fvalue == publish::ALWAYS)
 			{
-				Fpublisher->addToBurst(FvarOrigin, getTimeForPublish(), getDataForPublish());
+				if (Fpublisher)
+					Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS);
+				return;
 			}
+
+			// otherwise we're publishing as INHERIT --> check first if there is a recent value
+			if (FlastUpdateTime == 0)
+				return;
+
+			// okay publishing the collected data
+			if (Fpublisher)
+				Fpublisher->addToBurst(FvarOrigin, getTimeForPublish(), getDataForPublish(), Fvalue == publish::ALWAYS);
 			reset();
 		}
 	};
@@ -1569,6 +1580,47 @@ private:
 	}
 
 	/**
+	 * @brief publish the current value of a specific variable
+	 * @param _var variable pointer
+	 * @return whether _var was found in any of the variable intervals' origin
+	 */
+	bool publishVariable(Tdescr *_var)
+	{
+		return publishVariable(&sddsParticleVariables, _var);
+	}
+
+	// actual function
+	bool publishVariable(TmenuHandle *_vars, Tdescr *_var)
+	{
+		for (auto it = _vars->iterator(); it.hasCurrent(); it.jumpToNext())
+		{
+			auto d = it.current();
+			if (!d)
+				continue;
+			if (d->type() == sdds::Ttype::STRUCT)
+			{
+				TmenuHandle *mh = static_cast<Tstruct *>(d)->value();
+				if (mh)
+				{
+					if (publishVariable(mh, _var))
+						return true;
+				}
+			}
+			else
+			{
+				TparticleVarWrapper *pvw = static_cast<TparticleVarWrapper *>(d);
+				if (pvw->origin() == _var)
+				{
+					// found the matching wrapper
+					pvw->publish();
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * @brief publishing interval default
 	 */
 	struct TintervalDefault
@@ -1623,7 +1675,8 @@ private:
 			else
 			{
 				TparticleVarWrapper *pvw = static_cast<TparticleVarWrapper *>(d);
-				pvw->reset();
+				if (pvw->usesGlobalPublishingInterval())
+					pvw->reset();
 			}
 		}
 	}
@@ -1651,7 +1704,8 @@ private:
 			else
 			{
 				TparticleVarWrapper *pvw = static_cast<TparticleVarWrapper *>(d);
-				pvw->publish();
+				if (pvw->usesGlobalPublishingInterval())
+					pvw->publish();
 			}
 		}
 	}
@@ -1664,6 +1718,9 @@ private:
 
 	// sdds structure
 	TmenuHandle *Froot = nullptr;
+
+	// whether to reset the state/EEPROM
+	bool FresetState = false;
 
 	// plain comms handler to process sdds variable commands
 	TplainCommHandler Fpch;
@@ -1933,15 +1990,21 @@ public:
 		};
 
 		// startup complete
-		on(particleSystem().state.time)
+		on(sdds::setup())
 		{
-			// the state is loaded from EEPROM, this completes the startup
-			if (particleSystem().startup != TparticleSystem::TstartupStatus::complete)
-			{
-				particleSystem().startup = TparticleSystem::TstartupStatus::complete;
-				// trigger publish for last restart info
-				particleSystem().vitals.lastRestart = particleSystem().vitals.lastRestart;
-			}
+
+			// initialize state stream
+			sdds::paramSave::Tstream::INIT();
+
+			// resetting or loading state?
+			(FresetState) ? particleSystem().saveState(true) : particleSystem().loadState();
+
+			// mark startup complete now that state is loaded
+			particleSystem().startup = TparticleSystem::TstartupStatus::complete;
+
+			// publish startup info (will publish no matter what if these vars are set to ALWAYS)
+			publishVariable(&particleSystem().vitals.lastRestart);
+			publishVariable(&particleSystem().state.status);
 		};
 
 // debug actions
@@ -2009,8 +2072,8 @@ public:
 
 		// set default defaults
 		setupDefaults(
-			{// --> device EEPROM load error should always be published
-			 {publish::ALWAYS, &particleSystem().state.error},
+			{// --> device EEPROM status change should always be reported
+			 {publish::ALWAYS, &particleSystem().state.status},
 			 // --> device restart should be always published
 			 {publish::ALWAYS, &particleSystem().vitals.lastRestart}});
 
@@ -2018,7 +2081,6 @@ public:
 		setupDefaults(_defaults);
 
 		// process device reset information
-		bool resetState = false; // whether to reset the state/EEPROM
 		System.enableFeature(FEATURE_RESET_INFO);
 		if (System.resetReason() == RESET_REASON_PANIC)
 		{
@@ -2026,37 +2088,37 @@ public:
 			// https://docs.particle.io/reference/cloud-apis/api/#spark-device-last_reset
 			uint32_t panicCode = System.resetReasonData();
 			Log.error("restarted due to PANIC, code: %lu", panicCode);
-			particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::PANIC;
+			particleSystem().vitals.lastRestart = TparticleSystem::TrestartStatus::PANIC;
 			// System.enterSafeMode(); // go straight to safe mode?
 		}
 		else if (System.resetReason() == RESET_REASON_WATCHDOG)
 		{
 			// hardware watchdog detected a timeout
 			Log.warn("restarted due to watchdog (=timeout)");
-			particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::watchdogTimeout;
+			particleSystem().vitals.lastRestart = TparticleSystem::TrestartStatus::watchdogTimeout;
 		}
 		else if (System.resetReason() == RESET_REASON_USER)
 		{
 			// software triggered resets
 			uint32_t userReset = System.resetReasonData();
-			if (userReset == static_cast<uint8_t>(TparticleSystem::TresetStatus::outOfMemory))
+			if (userReset == static_cast<uint8_t>(TparticleSystem::TrestartStatus::outOfMemory))
 			{
 				// low memory detected
 				Log.warn("restarted due to low memory");
-				particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::outOfMemory;
+				particleSystem().vitals.lastRestart = TparticleSystem::TrestartStatus::outOfMemory;
 			}
-			else if (userReset == static_cast<uint8_t>(TparticleSystem::TresetStatus::userRestart))
+			else if (userReset == static_cast<uint8_t>(TparticleSystem::TrestartStatus::userRestart))
 			{
 				// user requested a restart
 				Log.trace("restarted per user request");
-				particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::userRestart;
+				particleSystem().vitals.lastRestart = TparticleSystem::TrestartStatus::userRestart;
 			}
-			else if (userReset == static_cast<uint8_t>(TparticleSystem::TresetStatus::userReset))
+			else if (userReset == static_cast<uint8_t>(TparticleSystem::TrestartStatus::userReset))
 			{
-				resetState = true;
+				FresetState = true;
 				// user requested a restart
 				Log.trace("restarted and resetting per user request");
-				particleSystem().vitals.lastRestart = TparticleSystem::TresetStatus::userReset;
+				particleSystem().vitals.lastRestart = TparticleSystem::TrestartStatus::userReset;
 			}
 		}
 		else
@@ -2065,15 +2127,10 @@ public:
 			// https://docs.particle.io/reference/cloud-apis/api/#spark-device-last_reset
 		}
 
-		// reset state params?
-		// resetState = true; // DEBUG: force state reset
-		if (resetState)
-		{
-			sdds::paramSave::Tstream::INIT();
-			sdds::paramSave::TparamStreamer ps;
-			sdds::paramSave::Tstream s;
-			ps.save(Froot, &s);
-		}
+// DEBUG option: force state reset
+#ifdef SDDS_PARTICLE_RESET
+		resetState = true;
+#endif
 
 		// main particle functions to interact with the the self-describing data-structure
 		Particle.function("sdds", &TparticleSpike::setVariables, this);

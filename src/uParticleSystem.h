@@ -33,7 +33,7 @@ private:
 
 public:
     // action comes first
-    sdds_enum(___, restart, reconnect, disconnect, reset, syncTime, sendVitals, sendSdds, sendSddsValues, sendBurstData, snapshotState) Taction;
+    sdds_enum(___, restart, reconnect, disconnect, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, sendBurstData, snapshotState) Taction;
     sdds_var(Taction, action); // take a system action
 
     // structure type & version definitions
@@ -49,19 +49,30 @@ public:
 
     sdds_enum(connecting, connected, disconnected) TinternetStatus;
     sdds_var(TinternetStatus, internet, sdds::opt::readonly, TinternetStatus::connecting); // internet status
-    sdds_var(TparamSaveMenu, state);                                                       // load/save state
+
+    // state
+    class Tstate : public TmenuHandle
+    {
+    public:
+        sdds_enum(normal, reset, failedLoad, failedSave) Tstatus;
+        sdds_var(Tstatus, status, sdds::opt::readonly);
+        sdds_var(Tstring, lastSave, sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly), "never");
+        sdds_var(Tuint16, size_byte, sdds::opt::readonly);
+        sdds_var(TparamError, error, sdds::opt::readonly);
+    };
+    sdds_var(Tstate, state); // load/save state
 
     // vitals variables
-    sdds_enum(nominal, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) TresetStatus;
+    sdds_enum(powerUp, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) TrestartStatus;
     class Tvitals : public TmenuHandle
     {
     public:
-        sdds_var(Tuint32, publishVitals_sec, sdds::opt::saveval, 60 * 60 * 6);           // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
-        sdds_var(Tstring, time, sdds::opt::readonly);                                    // system time
-        sdds_var(Tstring, mac, sdds::opt::readonly);                                     // wifi network - can get this from device list
-        sdds_var(Tstring, network, sdds::opt::readonly);                                 // wifi network - can get this from device vitals
-        sdds_var(Tuint8, signal, sdds::opt::readonly);                                   // wifi signal strength - can get this from device vitals
-        sdds_var(TresetStatus, lastRestart, sdds::opt::readonly, TresetStatus::nominal); // reset information
+        sdds_var(Tuint32, publishVitals_sec, sdds::opt::saveval, 60 * 60 * 6);               // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
+        sdds_var(Tstring, time, sdds::opt::readonly);                                        // system time
+        sdds_var(Tstring, mac, sdds::opt::readonly);                                         // wifi network - can get this from device list
+        sdds_var(Tstring, network, sdds::opt::readonly);                                     // wifi network - can get this from device vitals
+        sdds_var(Tuint8, signal_percent, sdds::opt::readonly);                               // wifi signal strength - can get this from device vitals
+        sdds_var(TrestartStatus, lastRestart, sdds::opt::readonly, TrestartStatus::powerUp); // restart information
 
 // random access memory (RAM, in bytes)
 #if (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_BORON)
@@ -196,13 +207,13 @@ public:
             else if (action == Taction::restart)
             {
                 // user requests a restart
-                System.reset(static_cast<uint8_t>(TresetStatus::userRestart));
+                System.reset(static_cast<uint8_t>(TrestartStatus::userRestart));
                 action = Taction::___;
             }
             else if (action == Taction::reset)
             {
                 // user requests a restart
-                System.reset(static_cast<uint8_t>(TresetStatus::userReset));
+                System.reset(static_cast<uint8_t>(TrestartStatus::userReset));
                 action = Taction::___;
             }
             else if (action == Taction::disconnect && internet != TinternetStatus::disconnected)
@@ -232,7 +243,13 @@ public:
             else if (action == Taction::sendVitals)
             {
                 // publish vitals to the cloud right now
+                Log.trace("publishing vitals"); // DEBUG
                 Particle.publishVitals(particle::NOW);
+                action = Taction::___;
+            }
+            else if (action == Taction::saveState)
+            {
+                saveState();
                 action = Taction::___;
             }
         };
@@ -258,7 +275,7 @@ public:
                     // not enough free memory to keep operating safely
                     // FIXME: should there be some sort of data dump of the queuedData first?
                     // probably good to put it onto the flash drive
-                    System.reset(static_cast<uint8_t>(TresetStatus::outOfMemory));
+                    System.reset(static_cast<uint8_t>(TrestartStatus::outOfMemory));
                 }
             }
 
@@ -278,8 +295,8 @@ public:
             {
                 WiFiSignal rssi = WiFi.RSSI();
                 dtypes::uint8 sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
-                if (vitals.signal != sig)
-                    vitals.signal = sig;
+                if (vitals.signal_percent != sig)
+                    vitals.signal_percent = sig;
                 if (vitals.network != WiFi.SSID())
                     vitals.network = WiFi.SSID();
             }
@@ -332,14 +349,65 @@ public:
         };
     }
 
-    // methods
+    // capture name and store it
     void captureName(const char *topic, const char *data)
     {
         if (strcmp(data, name) != 0)
         {
             name = data;
-            state.action = TenLoadSave::save;
+            saveState(); // always save the name right away if it changes
         }
+    }
+
+    // save state
+    void saveState(bool _reset = false)
+    {
+        // store current time as last save
+        // FIXME: ideally suspend the signal trigger here until save has actually succeeded!
+        String oldLastSave = state.lastSave;
+        state.lastSave = (_reset) ? "never" : Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
+        // try to save state into EEPROM
+        TmenuHandle *root = findRoot();
+        sdds::paramSave::TparamStreamer ps;
+        sdds::paramSave::Tstream s;
+        ps.save(root, &s);
+        // success?
+        if (ps.error() == TparamError::___)
+        {
+            // save was successful (always set status here)
+            (_reset) ? state.status = Tstate::Tstatus::reset : state.status = Tstate::Tstatus::normal;
+            state.size_byte = s.high();
+        }
+        else if (state.status != Tstate::Tstatus::failedSave)
+        {
+            // there was a problem!
+            state.lastSave = oldLastSave;
+            state.status = Tstate::Tstatus::failedSave;
+        }
+        state.error = ps.error();
+    }
+
+    // load state
+    void loadState()
+    {
+        // try to load state into EEPROM
+        TmenuHandle *root = findRoot();
+        sdds::paramSave::TparamStreamer ps;
+        sdds::paramSave::Tstream s;
+        ps.load(root, &s);
+        // success?
+        if (ps.error() == TparamError::___)
+        {
+            // load was successful (always set status here)
+            state.status = Tstate::Tstatus::normal;
+            state.size_byte = s.high();
+        }
+        else if (state.status != Tstate::Tstatus::failedLoad)
+        {
+            // there was a problem!
+            state.status = Tstate::Tstatus::failedLoad;
+        }
+        state.error = ps.error();
     }
 };
 
