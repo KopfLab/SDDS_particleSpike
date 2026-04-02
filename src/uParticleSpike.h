@@ -2037,8 +2037,8 @@ public:
 			else if (particleSystem().debug == TparticleSystem::TdebugAction::setDefaults)
 			{
 				setupDefaults(
-					{{publish::IMMEDIATELY, sdds::opt::saveval},
-					 {publish::INHERIT, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}}});
+					{{publish::EACH, sdds::opt::saveval},
+					 {publish::AVG_GLOBAL, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}}});
 			}
 			if (particleSystem().debug == TparticleSystem::TdebugAction::getCommandLog ||
 				particleSystem().debug == TparticleSystem::TdebugAction::setVars)
