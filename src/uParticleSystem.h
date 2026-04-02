@@ -56,7 +56,7 @@ public:
     public:
         sdds_enum(normal, reset, failedLoad, failedSave) Tstatus;
         sdds_var(Tstatus, status, sdds::opt::readonly);
-        sdds_var(Tstring, lastSave, sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly), "never");
+        sdds_var(Tstring, lastSave_dt, sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly), "never");
         sdds_var(Tuint16, size_byte, sdds::opt::readonly);
         sdds_var(TparamError, error, sdds::opt::readonly);
     };
@@ -68,7 +68,7 @@ public:
     {
     public:
         sdds_var(Tuint32, publishVitals_sec, sdds::opt::saveval, 60 * 60 * 6);               // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
-        sdds_var(Tstring, time, sdds::opt::readonly);                                        // system time
+        sdds_var(Tstring, time_dt, sdds::opt::readonly);                                     // system time
         sdds_var(Tstring, mac, sdds::opt::readonly);                                         // wifi network - can get this from device list
         sdds_var(Tstring, network, sdds::opt::readonly);                                     // wifi network - can get this from device vitals
         sdds_var(Tuint8, signal_percent, sdds::opt::readonly);                               // wifi signal strength - can get this from device vitals
@@ -328,7 +328,7 @@ public:
             if (Time.isValid() && Time.now() > FlastNow)
             {
                 FlastNow = Time.now();
-                vitals.time = Time.format(FlastNow, TIME_FORMAT_ISO8601_FULL); //"%Y-%m-%d %H:%M:%S %Z");
+                vitals.time_dt = Time.format(FlastNow, TIME_FORMAT_ISO8601_FULL); //"%Y-%m-%d %H:%M:%S %Z");
             }
 
             // trigger name handler
@@ -364,8 +364,8 @@ public:
     {
         // store current time as last save
         // FIXME: ideally suspend the signal trigger here until save has actually succeeded!
-        String oldLastSave = state.lastSave;
-        state.lastSave = (_reset) ? "never" : Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
+        String oldLastSave = state.lastSave_dt;
+        state.lastSave_dt = (_reset) ? "never" : Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
         // try to save state into EEPROM
         TmenuHandle *root = findRoot();
         sdds::paramSave::TparamStreamer ps;
@@ -381,7 +381,7 @@ public:
         else if (state.status != Tstate::Tstatus::failedSave)
         {
             // there was a problem!
-            state.lastSave = oldLastSave;
+            state.lastSave_dt = oldLastSave;
             state.status = Tstate::Tstatus::failedSave;
         }
         state.error = ps.error();

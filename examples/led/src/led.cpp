@@ -88,11 +88,11 @@ void setup()
         // set default publishing intervals for anything that should be different from publish::OFF
         {
             // --> all variables that are stored in EEPROM (saveeval option) should report all changes
-            {publish::IMMEDIATELY, sdds::opt::saveval},
+            {publish::EACH, sdds::opt::saveval},
             // --> all floats should inherit from the globalInterval (regardless of whether they are saved or not)
-            {publish::INHERIT, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}},
+            {publish::AVG_GLOBAL, {sdds::Ttype::FLOAT32, sdds::Ttype::FLOAT64}},
             // --> for this particular class, the ledSwitch should also inherit from globalInterval
-            {publish::INHERIT, &userStruct.led.ledSwitch}});
+            {publish::AVG_GLOBAL, &userStruct.led.ledSwitch}});
 }
 
 void loop()

@@ -15,10 +15,10 @@ public:
 	// define the publishing interval constants (not an sdds enum)
 	enum publish
 	{
-		INHERIT = -1,
-		OFF = 0,
-		IMMEDIATELY = 1, // if publishing is on
-		ALWAYS = 2,		 // even if publishing is off
+		AVG_GLOBAL = -1, // average and publish at global interval (if publishing is on!)
+		OFF = 0,		 // never publish
+		EACH = 1,		 // publish each value change immediately (if publishing is on!)
+		ALWAYS = 2,		 // publish each value change even if publishing is off
 		MAX = ALWAYS	 // keep track of what the maximum defined value is
 	};
 
@@ -1133,7 +1133,7 @@ private:
 				// only start collecting values once startup is complete
 				if (particleSystem().startup == TparticleSystem::TstartupStatus::complete)
 				{
-					if (Fvalue == publish::IMMEDIATELY || Fvalue == publish::ALWAYS)
+					if (Fvalue == publish::EACH || Fvalue == publish::ALWAYS)
 					{
 						// publish current variable value immediately (but only if it has changed!)
 						if (!FhasPreviousValue || isValueDifferent())
@@ -1200,7 +1200,7 @@ private:
 		 */
 		bool usesGlobalPublishingInterval()
 		{
-			return (Fvalue == publish::INHERIT);
+			return (Fvalue == publish::AVG_GLOBAL);
 		}
 
 		// methods implemented in derived classes
@@ -1223,7 +1223,7 @@ private:
 				return;
 
 			// is publishing immediate or always? --> publish current value (whatever it is)
-			if (Fvalue == publish::IMMEDIATELY || Fvalue == publish::ALWAYS)
+			if (Fvalue == publish::EACH || Fvalue == publish::ALWAYS)
 			{
 				if (Fpublisher)
 					Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS);
