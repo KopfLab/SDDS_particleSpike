@@ -89,7 +89,7 @@ public:
         inline static const size_t flashSectorSize_byte = 4 * 1024; // 4 KB
 #if (PLATFORM_ID == PLATFORM_MSOM)
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 8 * 1024 * 1024); // 8 MB
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize);
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize_byte);
 #elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 2 * 1024 * 1024); // 2 MB
         sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / flashSectorSize_byte);
