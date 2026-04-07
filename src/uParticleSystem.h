@@ -309,8 +309,8 @@ public:
             {
                 CellularSignal rssi = Cellular.RSSI();
                 dtypes::uint8 sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
-                if (vitals.signal != sig)
-                    vitals.signal = sig;
+                if (vitals.signal_percent != sig)
+                    vitals.signal_percent = sig;
                 // FIXME: what's the cellular network equivalent to SSID?
             }
 #endif
