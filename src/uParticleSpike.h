@@ -1951,11 +1951,11 @@ public:
 				publishValues("");
 				particleSystem().action = TparticleSystem::Taction::___;
 			}
-			else if (particleSystem().action == TparticleSystem::Taction::sendBurstData)
-			{
-				// FIXME: implement this
-				particleSystem().action = TparticleSystem::Taction::___;
-			}
+			// not implementing size based bursts for now, see https://github.com/KopfLab/SDDS_particleSpike/issues/4
+			// else if (particleSystem().action == TparticleSystem::Taction::sendBurstData)
+			// {
+			// 	particleSystem().action = TparticleSystem::Taction::___;
+			// }
 		};
 
 		// global publishing interval

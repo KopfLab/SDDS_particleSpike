@@ -1,3 +1,4 @@
+// example with serialSpike & particleSpike
 // example adapted from https://github.com/mLamneck/SDDS/blob/main/examples/led/led.ino
 
 #define SDDS_PARTICLE_DEBUG 1
@@ -16,8 +17,8 @@ class Tled : public TmenuHandle
 public:
     sdds_var(TonOff, ledSwitch, sdds::opt::saveval);
     sdds_var(TonOff, blinkSwitch, sdds::opt::saveval);
-    sdds_var(Tuint16, onTime, sdds::opt::saveval, 500);
-    sdds_var(Tuint16, offTime, sdds::opt::saveval, 500);
+    sdds_var(Tuint32, onTime_ms, sdds::opt::saveval, 500);
+    sdds_var(Tuint32, offTime_ms, sdds::opt::saveval, 500);
 
     // some value and unit to record
     sdds_var(Tuint16, value);
@@ -42,12 +43,12 @@ public:
             if (ledSwitch == TonOff::e::ON)
             {
                 ledSwitch = TonOff::e::OFF;
-                timer.start(offTime);
+                timer.start(offTime_ms);
             }
             else
             {
                 ledSwitch = TonOff::e::ON;
-                timer.start(onTime);
+                timer.start(onTime_ms);
             }
         };
     }
@@ -66,17 +67,19 @@ public:
 TserialSpike serialSpike(userStruct, 115200);
 
 // log handler
-SerialLogHandler logHandler(LOG_LEVEL_INFO, {
-                                                // Logging level for non-application messages
-                                                {"app", LOG_LEVEL_TRACE} // Logging level for application messages (i.e. debug mode)
-                                            });
+SerialLogHandler logHandler(
+    LOG_LEVEL_INFO,
+    {
+        // Logging level for non-application messages
+        {"app", LOG_LEVEL_TRACE} // Logging level for application messages (i.e. debug mode)
+    });
 
 // particle spike for paritcle communication
 #include "uParticleSpike.h"
 static TparticleSpike particleSpike(
     userStruct, // self-describing data structure (SDDS)
     "led",      // structure type name
-    2,          // structure version
+    5,          // structure version
     "Unit"      // auto-detect sdds vars' units based on this suffix
 );
 

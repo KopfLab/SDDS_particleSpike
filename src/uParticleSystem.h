@@ -33,7 +33,8 @@ private:
 
 public:
     // action comes first
-    sdds_enum(___, restart, reconnect, disconnect, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, sendBurstData, snapshotState) Taction;
+    // not implementing size based bursts for now (action sendBurstData), see https://github.com/KopfLab/SDDS_particleSpike/issues/4
+    sdds_enum(___, restart, reconnect, disconnect, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, snapshotState) Taction;
     sdds_var(Taction, action); // take a system action
 
     // structure type & version definitions
@@ -108,14 +109,15 @@ public:
         class Tbursts : public TmenuHandle
         {
         public:
-            sdds_var(Tuint32, size_byte, sdds::opt::saveval, 1024); // how many bytes to collect before a data burst is sent?
-            sdds_var(Tuint32, timer_ms, sdds::opt::saveval, 3000);  // how many milliseconds to wait at minimum before a data burst is sent?
-            sdds_var(Tuint32, queued, sdds::opt::readonly, 0);      // number of currently queued bursts
-            sdds_var(Tuint32, sending, sdds::opt::readonly, 0);     // number of currently sending bursts
-            sdds_var(Tuint32, sent, sdds::opt::readonly, 0);        // number of successfully sent bursts
-            sdds_var(Tuint32, failed, sdds::opt::readonly, 0);      // number of failed/requeued bursts
-            sdds_var(Tuint32, invalid, sdds::opt::readonly, 0);     // number of invalid/discarded bursts
-            sdds_var(Tuint32, discarded, sdds::opt::readonly, 0);   // number of invalid/discarded bursts
+            // not implementing size based bursts for now, see https://github.com/KopfLab/SDDS_particleSpike/issues/4
+            // sdds_var(Tuint32, size_byte, sdds::opt::saveval, 1024); // how many bytes to collect before a data burst is sent?
+            sdds_var(Tuint32, timer_ms, sdds::opt::saveval, 3000); // how many milliseconds to wait at minimum before a data burst is sent?
+            sdds_var(Tuint32, queued, sdds::opt::readonly, 0);     // number of currently queued bursts
+            sdds_var(Tuint32, sending, sdds::opt::readonly, 0);    // number of currently sending bursts
+            sdds_var(Tuint32, sent, sdds::opt::readonly, 0);       // number of successfully sent bursts
+            sdds_var(Tuint32, failed, sdds::opt::readonly, 0);     // number of failed/requeued bursts
+            sdds_var(Tuint32, invalid, sdds::opt::readonly, 0);    // number of invalid/discarded bursts
+            sdds_var(Tuint32, discarded, sdds::opt::readonly, 0);  // number of invalid/discarded bursts
         };
 
     public:
@@ -243,7 +245,7 @@ public:
             else if (action == Taction::sendVitals)
             {
                 // publish vitals to the cloud right now
-                Log.trace("publishing vitals"); // DEBUG
+                Log.trace("publishing vitals");
                 Particle.publishVitals(particle::NOW);
                 action = Taction::___;
             }
