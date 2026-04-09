@@ -2010,8 +2010,8 @@ public:
 				char buf[20]; // snprintf buffer
 				dtypes::uint32 diff = static_cast<dtypes::uint32>(round((FnextGlobalPublish - millis()) / 1000.));
 				if (diff > 3600)
-					snprintf(buf, sizeof(buf), "%dh%dm%ds", diff / 3600, (diff % 3600) / 60, diff % 60);
-				if (diff > 60)
+					snprintf(buf, sizeof(buf), "%dh%dm", diff / 3600, (diff % 3600) / 60);
+				else if (diff > 60)
 					snprintf(buf, sizeof(buf), "%dm%ds", diff / 60, diff % 60);
 				else
 					snprintf(buf, sizeof(buf), "%ds", diff);
