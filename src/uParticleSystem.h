@@ -210,18 +210,21 @@ public:
             else if (action == Taction::restart)
             {
                 // user requests a restart
+                // FIXME: schedule action with a 1 sec timer instad of triggering it right away so that the command can provide a return code
                 System.reset(static_cast<uint8_t>(TrestartStatus::userRestart));
                 action = Taction::___;
             }
             else if (action == Taction::reset)
             {
                 // user requests a restart
+                // FIXME: schedule action with a 1 sec timer instad of triggering it right away so that the command can provide a return code
                 System.reset(static_cast<uint8_t>(TrestartStatus::userReset));
                 action = Taction::___;
             }
             else if (action == Taction::disconnect && internet != TinternetStatus::disconnected)
             {
                 // user requests to disconnect
+                // FIXME: schedule action with a 1 sec timer instad of triggering it right away so that the command can provide a return code
                 Log.trace("disconnecting from the cloud");
                 internet = TinternetStatus::disconnected;
                 // note: this does NOT turn wifi/cellular modem off!
