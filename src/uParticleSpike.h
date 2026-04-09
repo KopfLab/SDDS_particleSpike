@@ -1727,6 +1727,7 @@ private:
 
 	// Timer for global publishing interval
 	Ttimer FglobalPublishTimer;
+	Ttimer FglobalPublishInfoTimer;
 
 	// error codes
 	constexpr static int ERR_NO_CMD = -200;
@@ -1898,6 +1899,14 @@ private:
 private:
 	// keep track of publishing to detect when it switches from OFF to ON
 	bool FisPublishing = particleSystem().publishing.publish == TonOff::ON;
+	system_tick_t FnextGlobalPublish = 0;
+
+	void startGlobalPublishTimer()
+	{
+		FnextGlobalPublish = millis() + particleSystem().publishing.globalInterval_ms.value();
+		FglobalPublishTimer.start(particleSystem().publishing.globalInterval_ms);
+		FglobalPublishInfoTimer.start(0);
+	}
 
 public:
 	/**
@@ -1965,9 +1974,9 @@ public:
 				particleSystem().publishing.globalInterval_ms = 1000; // don't allow publishing any faster than once a second
 			FglobalPublishTimer.stop();
 			resetGlobal();
-			FglobalPublishTimer.start(particleSystem().publishing.globalInterval_ms);
+			startGlobalPublishTimer();
 		};
-		FglobalPublishTimer.start(particleSystem().publishing.globalInterval_ms);
+		startGlobalPublishTimer();
 
 		// (re)start timer when publishing is turned on
 		on(particleSystem().publishing.publish)
@@ -1977,7 +1986,7 @@ public:
 			{
 				FglobalPublishTimer.stop();
 				resetGlobal();
-				FglobalPublishTimer.start(particleSystem().publishing.globalInterval_ms);
+				startGlobalPublishTimer();
 			}
 			FisPublishing = particleSystem().publishing.publish == TonOff::ON;
 		};
@@ -1986,7 +1995,34 @@ public:
 		on(FglobalPublishTimer)
 		{
 			publishGlobal(); // variables reset themselves after publish
-			FglobalPublishTimer.start(particleSystem().publishing.globalInterval_ms);
+			startGlobalPublishTimer();
+		};
+
+		// publishing info update timer
+		on(FglobalPublishInfoTimer)
+		{
+			if (particleSystem().publishing.publish != TonOff::ON)
+			{
+				particleSystem().publishing.nextGlobalPublish = "off";
+			}
+			else if (FnextGlobalPublish > millis())
+			{
+				char buf[20]; // snprintf buffer
+				dtypes::uint32 diff = static_cast<dtypes::uint32>(round((FnextGlobalPublish - millis()) / 1000.));
+				if (diff > 3600)
+					snprintf(buf, sizeof(buf), "%dh%dm%ds", diff / 3600, (diff % 3600) / 60, diff % 60);
+				if (diff > 60)
+					snprintf(buf, sizeof(buf), "%dm%ds", diff / 60, diff % 60);
+				else
+					snprintf(buf, sizeof(buf), "%ds", diff);
+				particleSystem().publishing.nextGlobalPublish = buf;
+			}
+			else
+			{
+				particleSystem().publishing.nextGlobalPublish = "now";
+			}
+			if (particleSystem().publishing.publish == TonOff::ON)
+				FglobalPublishInfoTimer.start(1000); // restart
 		};
 
 		// startup complete

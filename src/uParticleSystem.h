@@ -125,6 +125,7 @@ public:
         sdds_var(Tstring, event, sdds::opt::saveval, "sddsData");                 // publish event name
         sdds_var(Tbursts, bursts);                                                // burst information
         sdds_var(Tuint32, globalInterval_ms, sdds::opt::saveval, 1000 * 60 * 10); // global publish interval (in milliseconds)
+        sdds_var(Tstring, nextGlobalPublish, sdds::opt::readonly, "off");
     };
     sdds_var(Tpublishing, publishing);
 
