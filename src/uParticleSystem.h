@@ -151,6 +151,10 @@ sdds_var(TdebugAction, debug)  // debug actions
     const system_tick_t FcheckInterval = 100; // ms
     Ttimer FsystemCheckTimer;
 
+    // delayed action timers
+    Ttimer FdelayedActionTimer;
+    Taction::e FdelayedAction = Taction::___;
+
     // time sync timer
     const system_tick_t FtimeSyncInterval = 1000 * 60 * 60 * 6; // every 6 hours should suffice
     Ttimer FsyncTimer;
@@ -209,29 +213,21 @@ public:
             }
             else if (action == Taction::restart)
             {
-                // user requests a restart
-                // FIXME: schedule action with a 1 sec timer instad of triggering it right away so that the command can provide a return code
-                System.reset(static_cast<uint8_t>(TrestartStatus::userRestart));
-                action = Taction::___;
+                // user requests a restart (execute as delayed action to allow time for device to report back to cloud)
+                FdelayedAction = Taction::restart;
+                FdelayedActionTimer.start(1000);
             }
             else if (action == Taction::reset)
             {
-                // user requests a restart
-                // FIXME: schedule action with a 1 sec timer instad of triggering it right away so that the command can provide a return code
-                System.reset(static_cast<uint8_t>(TrestartStatus::userReset));
-                action = Taction::___;
+                // user requests a reset  (execute as delayed action to allow time for device to report back to cloud)
+                FdelayedAction = Taction::reset;
+                FdelayedActionTimer.start(1000);
             }
-            else if (action == Taction::disconnect && internet != TinternetStatus::disconnected)
+            else if (action == Taction::disconnect)
             {
-                // user requests to disconnect
-                // FIXME: schedule action with a 1 sec timer instad of triggering it right away so that the command can provide a return code
-                Log.trace("disconnecting from the cloud");
-                internet = TinternetStatus::disconnected;
-                // note: this does NOT turn wifi/cellular modem off!
-                // if that's intended (e.g. for power safe), see the restrictions about cellular sim card locks
-                // at https://docs.particle.io/reference/device-os/api/cellular/off/
-                Particle.disconnect();
-                action = Taction::___;
+                // user requests to disconnect (execute as delayed action to allow time for device to report back to cloud)
+                FdelayedAction = Taction::disconnect;
+                FdelayedActionTimer.start(1000);
             }
             else if (action == Taction::reconnect && internet == TinternetStatus::disconnected)
             {
@@ -257,6 +253,24 @@ public:
             {
                 saveState();
                 action = Taction::___;
+            }
+        };
+
+        // delayed action execution
+        on(FdelayedActionTimer)
+        {
+            if (FdelayedAction == Taction::restart)
+                System.reset(static_cast<uint8_t>(TrestartStatus::userRestart));
+            else if (FdelayedAction == Taction::reset)
+                System.reset(static_cast<uint8_t>(TrestartStatus::userReset));
+            else if (FdelayedAction == Taction::disconnect && internet != TinternetStatus::disconnected)
+            {
+                Log.trace("disconnecting from the cloud");
+                internet = TinternetStatus::disconnected;
+                // note: this does NOT turn wifi/cellular modem off!
+                // if that's intended (e.g. for power safe), see the restrictions about cellular sim card locks
+                // at https://docs.particle.io/reference/device-os/api/cellular/off/
+                Particle.disconnect();
             }
         };
 
