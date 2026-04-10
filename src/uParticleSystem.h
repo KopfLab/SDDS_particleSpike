@@ -34,7 +34,7 @@ private:
 public:
     // action comes first
     // not implementing size based bursts for now (action sendBurstData), see https://github.com/KopfLab/SDDS_particleSpike/issues/4
-    sdds_enum(___, restart, reconnect, disconnect, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, snapshotState) Taction;
+    sdds_enum(___, restart, reconnect, disconnect, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, sendSddsState) Taction;
     sdds_var(Taction, action); // take a system action
 
     // structure type & version definitions

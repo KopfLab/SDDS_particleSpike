@@ -72,6 +72,11 @@ private:
 		inline static const char *FvaluesVersionKey = "v";
 		inline static const char *FvaluesDataKey = "d";
 
+		// keys for state (=snapshot) top level
+		inline static const char *FstateDeviceNameKey = "n";
+		inline static const char *FstateTimeBaseKey = "tb";
+		inline static const char *FstateDataKey = "s";
+
 		// keys for tree Tdesc
 		inline static const char *FdescTypeKey = "t";
 		inline static const char *FdescOptKey = "o";
@@ -91,7 +96,6 @@ private:
 		inline static const char *FburstNumSdevKey = "s";
 		inline static const char *FburstTextValueKey = "c";
 		inline static const char *FburstUnitsKey = "u";
-		inline static const char *FburstsnapshotStateKey = "STATE";
 
 		// keys for var command log
 		inline static const char *FvarLogTimeBaseKey = "tb";
@@ -354,15 +358,6 @@ private:
 			return var;
 		}
 
-		static Variant serializeValuesForsnapshotState(TmenuHandle *_struct)
-		{
-			Variant snapshotState;
-			snapshotState.set(
-				FburstsnapshotStateKey,
-				serializeValues(_struct, true, sdds::opt::saveval, true));
-			return (snapshotState);
-		}
-
 		/**
 		 * @brief serialize with particle information added
 		 */
@@ -373,6 +368,18 @@ private:
 			var.set(FvaluesVersionKey, particleSystem().version.value());
 			var.set(FvaluesDeviceNameKey, particleSystem().name.c_str());
 			var.set(FvaluesDataKey, serializeValues(_struct, false, -1, false));
+			return var;
+		}
+
+		/**
+		 * @brief serialize state variable/value pairs (i.e. all elemens that can be stored in EEPROM)
+		 */
+		static Variant serializeParticleState(TmenuHandle *_struct)
+		{
+			Variant var;
+			var.set(FstateDeviceNameKey, particleSystem().name.c_str());
+			var.set(FstateTimeBaseKey, Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL));
+			var.set(FstateDataKey, serializeValues(_struct, true, sdds::opt::saveval, true));
 			return var;
 		}
 
@@ -1846,7 +1853,7 @@ private:
 	}
 
 	/**
-	 * @brief Particle.function sddsPublishTree
+	 * @brief Particle.function sendSdds
 	 */
 	int publishTree(String _cmd)
 	{
@@ -1860,7 +1867,7 @@ private:
 	}
 
 	/**
-	 * @brief Particle.variable sddsGetTree
+	 * @brief Particle.variable getSdds
 	 */
 	String getTree()
 	{
@@ -1869,7 +1876,7 @@ private:
 	}
 
 	/**
-	 * @brief Particle.function sddsPublishValues
+	 * @brief Particle.function sendSddsValues
 	 */
 	int publishValues(String _cmd)
 	{
@@ -1883,12 +1890,26 @@ private:
 	}
 
 	/**
-	 * @brief Particle.variable sddsGetValues
+	 * @brief Particle.variable getSddsValues
 	 */
 	String getValues()
 	{
 		Variant values = TparticleSerializer::serializeParticleValues(Froot);
 		return FvarResp.queue(values.toJSON());
+	}
+
+	/**
+	 * @brief Particle.function sendSddsState
+	 */
+	int publishState(String _cmd)
+	{
+		Variant state = TparticleSerializer::serializeParticleState(Froot);
+		if (!Fpublisher.queueData(state))
+			// the state is oo large to publish, must use sddsGetValues instead
+			return ERR_EVENT_SIZE_MAX;
+
+		// succesfully queued values for cloud event
+		return 0;
 	}
 
 #pragma endregion
@@ -1932,23 +1953,6 @@ public:
 				// do nothing
 				return;
 			}
-			else if (particleSystem().action == TparticleSystem::Taction::snapshotState)
-			{
-
-				// get snapshotState
-				Variant snapshotState = TparticleSerializer::serializeValuesForsnapshotState(Froot);
-
-				if (Log.isTraceEnabled())
-				{
-					Log.trace("*** snapshotState ***");
-					Log.print(snapshotState.toJSON().c_str());
-					Log.print("\n");
-				}
-
-				// add all variables to burst that are saveval --> always do this if requested
-				Fpublisher.addToBurst(Froot, millis(), snapshotState, true);
-				particleSystem().action = TparticleSystem::Taction::___;
-			}
 			else if (particleSystem().action == TparticleSystem::Taction::sendSdds)
 			{
 
@@ -1958,6 +1962,11 @@ public:
 			else if (particleSystem().action == TparticleSystem::Taction::sendSddsValues)
 			{
 				publishValues("");
+				particleSystem().action = TparticleSystem::Taction::___;
+			}
+			else if (particleSystem().action == TparticleSystem::Taction::sendSddsState)
+			{
+				publishState("");
 				particleSystem().action = TparticleSystem::Taction::___;
 			}
 			// not implementing size based bursts for now, see https://github.com/KopfLab/SDDS_particleSpike/issues/4
@@ -2171,9 +2180,10 @@ public:
 		// main particle functions to interact with the the self-describing data-structure
 		Particle.function("sdds", &TparticleSpike::setVariables, this);
 
-		// convenience particle functions to publish tree and values to event stream (also possible via sdds "SYSTEM.action=sendSdds/sendSddsValues")
+		// particle functions to publish tree, values, and state to event stream (also possible via sdds "SYSTEM.action=sendSdds/sendSddsValues/sendSddsState")
 		Particle.function("sendSdds", &TparticleSpike::publishTree, this);
 		Particle.function("sendSddsValues", &TparticleSpike::publishValues, this);
+		Particle.function("sendSddsState", &TparticleSpike::publishState, this);
 
 		// backup particle variables to get tree/values if capturing publish events is not feasible or the structure is too big:
 		Particle.variable("getSdds", [this]()
