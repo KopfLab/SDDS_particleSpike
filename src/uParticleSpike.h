@@ -1912,6 +1912,14 @@ private:
 		return 0;
 	}
 
+	/**
+	 * @brief Particle.variable getSddsPublish
+	 */
+	String getPublish()
+	{
+		return particleSystem().publishing.publish.to_string();
+	}
+
 #pragma endregion
 
 /*** constructor and setup ***/
@@ -2184,6 +2192,10 @@ public:
 		Particle.function("sendSdds", &TparticleSpike::publishTree, this);
 		Particle.function("sendSddsValues", &TparticleSpike::publishValues, this);
 		Particle.function("sendSddsState", &TparticleSpike::publishState, this);
+
+		// frequent check variables
+		Particle.variable("getSddsPublish", [this]()
+						  { return this->getPublish(); });
 
 		// backup particle variables to get tree/values if capturing publish events is not feasible or the structure is too big:
 		Particle.variable("getSdds", [this]()

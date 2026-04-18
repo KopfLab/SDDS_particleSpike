@@ -124,7 +124,7 @@ public:
         sdds_var(TonOff, publish, sdds::opt::saveval, TonOff::OFF);               // global on/off for publishing to the cloud
         sdds_var(Tstring, event, sdds::opt::saveval, "sddsData");                 // publish event name
         sdds_var(Tbursts, bursts);                                                // burst information
-        sdds_var(Tuint32, globalInterval_ms, sdds::opt::saveval, 1000 * 60 * 10); // global publish interval (in milliseconds)
+        sdds_var(Tuint32, globalInterval_ms, sdds::opt::saveval, 1000 * 60 * 20); // global publish interval (in milliseconds)
         sdds_var(Tstring, nextGlobalPublish, sdds::opt::readonly, "off");
     };
     sdds_var(Tpublishing, publishing);
