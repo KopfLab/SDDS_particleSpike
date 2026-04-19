@@ -57,6 +57,7 @@ public:
     public:
         sdds_enum(normal, reset, failedLoad, failedSave) Tstatus;
         sdds_var(Tstatus, status, sdds::opt::readonly);
+        sdds_var(TonOff, autoSendOnStartup, sdds::opt::saveval, TonOff::ON); // auto-send on startup if publishing is on
         sdds_var(Tstring, lastSave_dt, sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly), "never");
         sdds_var(Tuint16, size_byte, sdds::opt::readonly);
         sdds_var(TparamError, error, sdds::opt::readonly);

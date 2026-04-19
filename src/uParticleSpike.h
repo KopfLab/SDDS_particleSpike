@@ -2058,6 +2058,12 @@ public:
 			// publish startup info (will publish no matter what if these vars are set to ALWAYS)
 			publishVariable(&particleSystem().vitals.lastRestart);
 			publishVariable(&particleSystem().state.status);
+
+			// publish state if we're publishing and autosend on startup is on
+			if (particleSystem().publishing.publish == TonOff::ON && particleSystem().state.autoSendOnStartup == TonOff::ON)
+			{
+				publishState("");
+			}
 		};
 
 // debug actions
