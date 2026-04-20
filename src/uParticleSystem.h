@@ -4,6 +4,7 @@
 #include "uTypedef.h"
 #include "uCoreEnums.h"
 #include "uParamSave.h"
+#include <dirent.h>
 
 // always use system threading to avoid particle cloud synchronization to block the app
 #ifndef SYSTEM_VERSION_v620
@@ -87,19 +88,19 @@ public:
         sdds_var(Tuint32, freeRAM_byte, sdds::opt::readonly); // free memory information
 
         // flash memory (in bytes) / number of sectors
-        inline static const size_t flashSectorSize_byte = 4 * 1024; // 4 KB
+        inline static const size_t FflashSectorSize_byte = 4 * 1024; // 4 KB
 #if (PLATFORM_ID == PLATFORM_MSOM)
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 8 * 1024 * 1024); // 8 MB
         sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize_byte);
 #elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 2 * 1024 * 1024); // 2 MB
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / flashSectorSize_byte);
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / FflashSectorSize_byte);
 #else
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 0);
         sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 0);
 #endif
-        sdds_var(Tuint32, freeFlash_byte, sdds::opt::readonly); // free flash (FIXME: not yet used)
-        sdds_var(Tuint32, freeSectors, sdds::opt::readonly);    // free sectors (FIXME: not yet used)
+        sdds_var(Tuint32, freeFlash_byte, sdds::opt::readonly);
+        sdds_var(Tuint32, freeSectors, sdds::opt::readonly);
     };
     sdds_var(Tvitals, vitals);
 
@@ -192,6 +193,10 @@ public:
             snprintf(buff, sizeof(buff), "%02x:%02x:%02x:%02x:%02x:%02x", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
             vitals.mac = buff;
 #endif
+
+            // calculate free flash memory
+            // DO NOT do this regularly, too much overhead, instead do it after writes to flash
+            checkFlashUsage();
 
             // subscribe to name handler
             Particle.subscribe("particle/device/name", &TparticleSystem::captureName, this);
@@ -429,6 +434,55 @@ public:
             state.status = Tstate::Tstatus::failedLoad;
         }
         state.error = ps.error();
+    }
+
+    size_t bytesToSectors(size_t _bytes)
+    {
+        return (_bytes + vitals.FflashSectorSize_byte - 1) / vitals.FflashSectorSize_byte;
+    }
+
+    size_t getDirSectors(const char *path = "/")
+    {
+        size_t sectors = 0;
+        DIR *dir = opendir(path);
+        if (!dir)
+            return 0;
+
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL)
+        {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+
+            char fullPath[128];
+            snprintf(fullPath, sizeof(fullPath), "%s/%s", path, entry->d_name);
+
+            struct stat s;
+            if (stat(fullPath, &s) == 0)
+            {
+                if (S_ISDIR(s.st_mode))
+                {
+                    sectors += 1; // dir metadata sector
+                    sectors += getDirSectors(fullPath);
+                }
+                else
+                {
+                    sectors += 1;                                      // file metadata sector
+                    sectors += max(1, (int)bytesToSectors(s.st_size)); // min 1 data sector
+                }
+            }
+        }
+        closedir(dir);
+        return sectors;
+    }
+
+    // calculate flash use
+    void checkFlashUsage()
+    {
+        // LittleFS superblock (2 reserved root sectors) + root directory metadata sector
+        size_t usedSectors = 2 + 1 + getDirSectors("/");
+        vitals.freeSectors = (usedSectors < vitals.totalSectors) ? vitals.totalSectors - usedSectors : 0;
+        vitals.freeFlash_byte = vitals.freeSectors * vitals.FflashSectorSize_byte;
     }
 };
 
