@@ -91,15 +91,20 @@ public:
         inline static const size_t FflashSectorSize_byte = 4 * 1024; // 4 KB
 #if (PLATFORM_ID == PLATFORM_MSOM)
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 8 * 1024 * 1024); // 8 MB
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize_byte);
 #elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 2 * 1024 * 1024); // 2 MB
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / FflashSectorSize_byte);
 #else
         sdds_var(Tuint32, totalFlash_byte, sdds::opt::readonly, 0);
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 0);
 #endif
         sdds_var(Tuint32, freeFlash_byte, sdds::opt::readonly);
+
+#if (PLATFORM_ID == PLATFORM_MSOM)
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize_byte);
+#elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / FflashSectorSize_byte);
+#else
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 0);
+#endif
         sdds_var(Tuint32, freeSectors, sdds::opt::readonly);
     };
     sdds_var(Tvitals, vitals);
@@ -123,7 +128,7 @@ public:
         };
 
     public:
-        sdds_var(TonOff, publish, sdds::opt::saveval, TonOff::OFF);               // global on/off for publishing to the cloud
+        sdds_var(TonOff, record, sdds::opt::saveval, TonOff::OFF);                // global on/off for publishing/recording to the cloud
         sdds_var(Tstring, event, sdds::opt::saveval, "sddsData");                 // publish event name
         sdds_var(Tbursts, bursts);                                                // burst information
         sdds_var(Tuint32, globalInterval_ms, sdds::opt::saveval, 1000 * 60 * 20); // global publish interval (in milliseconds)

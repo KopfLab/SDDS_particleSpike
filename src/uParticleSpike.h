@@ -326,8 +326,9 @@ private:
 		 * @param _withNameAsKey whether to include the name as key or just the value
 		 * @param _optsFilter whether to filter for values with speicifc options
 		 * @param _enumAsText whether to include enum values as text (instead of number)
+		 * @param _exclude a menu item to exclude from the serialization if encoutnered
 		 */
-		static Variant serializeValues(TmenuHandle *_struct, bool _withNameAsKey = true, int _optsFilter = -1, bool _enumAsText = true)
+		static Variant serializeValues(TmenuHandle *_struct, bool _withNameAsKey = true, int _optsFilter = -1, bool _enumAsText = true, TmenuHandle *_exclude = nullptr)
 		{
 			Variant var;
 			for (auto it = _struct->iterator(); it.hasCurrent(); it.jumpToNext())
@@ -337,8 +338,8 @@ private:
 				if (d->isStruct())
 				{
 					TmenuHandle *mh = static_cast<Tstruct *>(d)->value();
-					if (mh)
-						item = serializeValues(mh, _withNameAsKey, _optsFilter, _enumAsText);
+					if (mh && (!_exclude || mh != _exclude))
+						item = serializeValues(mh, _withNameAsKey, _optsFilter, _enumAsText, _exclude);
 				}
 				else
 				{
@@ -977,14 +978,14 @@ private:
 
 // debug info
 #ifdef SDDS_PARTICLE_DEBUG
-			if (!_always && particleSystem().publishing.publish != TonOff::ON)
+			if (!_always && particleSystem().publishing.record != TonOff::ON)
 				Log.trace("NOT adding to burst for %s: %s", TparticleSerializer::getVarPath(_d).c_str(), _data.toJSON().c_str());
 			else
 				Log.trace("ADDING to burst for %s: %s", TparticleSerializer::getVarPath(_d).c_str(), _data.toJSON().c_str());
 #endif
 
 			// publish needs to be active or these data need to be set to always
-			if (!_always && particleSystem().publishing.publish != TonOff::ON)
+			if (!_always && particleSystem().publishing.record != TonOff::ON)
 				return;
 
 			// keep track of min time
@@ -1913,11 +1914,13 @@ private:
 	}
 
 	/**
-	 * @brief Particle.variable getSddsPublish
+	 * @brief Particle.variable getSddsSystem
 	 */
-	String getPublish()
+	String getSystem()
 	{
-		return particleSystem().publishing.publish.to_string();
+		// serialize the SYSTEM submenu except for the individual variable interval
+		Variant system = TparticleSerializer::serializeValues(particleSystem(), true, -1, true, &sddsParticleVariables);
+		return system.toJSON();
 	}
 
 #pragma endregion
@@ -1927,7 +1930,7 @@ private:
 
 private:
 	// keep track of publishing to detect when it switches from OFF to ON
-	bool FisPublishing = particleSystem().publishing.publish == TonOff::ON;
+	bool FisPublishing = particleSystem().publishing.record == TonOff::ON;
 	system_tick_t FnextGlobalPublish = 0;
 
 	void startGlobalPublishTimer()
@@ -1996,16 +1999,16 @@ public:
 		startGlobalPublishTimer();
 
 		// (re)start timer when publishing is turned on
-		on(particleSystem().publishing.publish)
+		on(particleSystem().publishing.record)
 		{
 			// triggers only if publishing is freshly turned on
-			if (!FisPublishing && particleSystem().publishing.publish == TonOff::ON)
+			if (!FisPublishing && particleSystem().publishing.record == TonOff::ON)
 			{
 				FglobalPublishTimer.stop();
 				resetGlobal();
 				startGlobalPublishTimer();
 			}
-			FisPublishing = particleSystem().publishing.publish == TonOff::ON;
+			FisPublishing = particleSystem().publishing.record == TonOff::ON;
 		};
 
 		// publish timer triggers
@@ -2018,7 +2021,7 @@ public:
 		// publishing info update timer
 		on(FglobalPublishInfoTimer)
 		{
-			if (particleSystem().publishing.publish != TonOff::ON)
+			if (particleSystem().publishing.record != TonOff::ON)
 			{
 				particleSystem().publishing.nextGlobalPublish = "off";
 			}
@@ -2038,7 +2041,7 @@ public:
 			{
 				particleSystem().publishing.nextGlobalPublish = "now";
 			}
-			if (particleSystem().publishing.publish == TonOff::ON)
+			if (particleSystem().publishing.record == TonOff::ON)
 				FglobalPublishInfoTimer.start(1000); // restart
 		};
 
@@ -2060,7 +2063,7 @@ public:
 			publishVariable(&particleSystem().state.status);
 
 			// publish state if we're publishing and autosend on startup is on
-			if (particleSystem().publishing.publish == TonOff::ON && particleSystem().state.autoSendOnStartup == TonOff::ON)
+			if (particleSystem().publishing.record == TonOff::ON && particleSystem().state.autoSendOnStartup == TonOff::ON)
 			{
 				publishState("");
 			}
@@ -2199,9 +2202,9 @@ public:
 		Particle.function("sendSddsValues", &TparticleSpike::publishValues, this);
 		Particle.function("sendSddsState", &TparticleSpike::publishState, this);
 
-		// frequent check variables
-		Particle.variable("getSddsPublish", [this]()
-						  { return this->getPublish(); });
+		// get SDDS sytem tree (minus the variable publish intervas), i.e. just the core tree which is small enough to fit into 1kB variable
+		Particle.variable("getSddsSystem", [this]()
+						  { return this->getSystem(); });
 
 		// backup particle variables to get tree/values if capturing publish events is not feasible or the structure is too big:
 		Particle.variable("getSdds", [this]()
