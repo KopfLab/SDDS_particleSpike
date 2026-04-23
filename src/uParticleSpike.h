@@ -1945,14 +1945,16 @@ public:
 	 * @brief particle spike consturctor
 	 * @param _root the sdds tree
 	 * @param _type name of the structure type, i.e. what kind of device is this? ("pump", "mfc", etc.)
+	 * @param _dataEvent default name of the data event (e.g. sddsData, the default in the alternative constructor)
 	 * @param _version version of the structure type to inform servers who have cached structure when the structure type has been updated
 	 * @param _unit name of unit vars suffix for auto-detecting dynamic units (pass "" to turn auto-detection off)
 	 */
-	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, dtypes::uint16 _version, const dtypes::string &_unit) : Fpch(_root, nullptr)
+	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, const dtypes::string &_dataEvent, dtypes::uint16 _version, const dtypes::string &_unit) : Fpch(_root, nullptr)
 	{
 		Froot = _root;
 		particleSystem().type = _type;
 		particleSystem().version = _version;
+		particleSystem().publishing.event = _dataEvent;
 		FunitVarSuffix = _unit;
 		FunitAutoDetect = FunitVarSuffix != "";
 
@@ -2116,7 +2118,10 @@ public:
 		};
 #endif
 	}
-	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, dtypes::uint16 _version) : TparticleSpike(_root, _type, _version, "")
+	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, const dtypes::string &_dataEvent, dtypes::uint16 _version) : TparticleSpike(_root, _type, _dataEvent, _version, "")
+	{
+	}
+	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, dtypes::uint16 _version) : TparticleSpike(_root, _type, "sddsData", _version, "")
 	{
 	}
 
