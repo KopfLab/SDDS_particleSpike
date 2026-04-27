@@ -2118,6 +2118,9 @@ public:
 		};
 #endif
 	}
+	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, dtypes::uint16 _version, const dtypes::string &_unit) : TparticleSpike(_root, _type, "sddsData", _version, _unit)
+	{
+	}
 	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, const dtypes::string &_dataEvent, dtypes::uint16 _version) : TparticleSpike(_root, _type, _dataEvent, _version, "")
 	{
 	}
