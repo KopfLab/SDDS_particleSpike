@@ -14,6 +14,9 @@ task :sdds => :compile
 desc "LED example with particleSpike"
 task :led => :compile
 
+desc "Timed switch example"
+task :timed_switch => :compile
+
 desc "ADC example with particleSpike"
 task :adc => :compile
 
