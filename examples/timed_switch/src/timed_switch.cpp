@@ -239,7 +239,7 @@ TserialSpike serialSpike(sddsTree, 115200);
 
 // particle spike for particle communication (with sdds name and version)
 #include "uParticleSpike.h"
-static TparticleSpike particleSpike(sddsTree, "timedSwitch", 00101);
+static TparticleSpike particleSpike(sddsTree, "timedSwitch", 101);
 
 // setup
 void setup()
