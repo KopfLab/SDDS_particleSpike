@@ -11,12 +11,12 @@ public:
     // sdds enums
     using TonOff = sdds::enums::OnOff;
     sdds_enum(___, on, off, schedule) Taction;
-    sdds_enum(on, off, schedule) Tstate;
+    sdds_enum(on, off, schedule, noPin) Tstate;
 
     // sdds vars
     sdds_var(Taction, action);
-    sdds_var(Tstate, state, sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly), Tstate::off);
-    sdds_var(Tuint8, pin, sdds::opt::saveval, A2);
+    sdds_var(Tstate, state, sdds_joinOpt(sdds::opt::saveval, sdds::opt::readonly), Tstate::noPin);
+    sdds_var(Tint8, pin, sdds::opt::readonly, -1);
     sdds_var(Tuint8, intensity_percent, sdds::opt::saveval, 100);
     sdds_var(Tuint32, scheduleOn_sec, sdds::opt::saveval, 60 * 60 * 12);  // 12 hours on
     sdds_var(Tuint32, scheduleOff_sec, sdds::opt::saveval, 60 * 60 * 12); // 12 hours off
@@ -83,6 +83,10 @@ private:
     // update hardware based on settings
     void update(Tstate::e _lightState)
     {
+        // nothing happens if there's no pin defined
+        if (state == Tstate::noPin)
+            return;
+
         // light
         bool light = false;
         if (_lightState == Tstate::off)
@@ -146,13 +150,13 @@ public:
         // setup
         on(sdds::setup())
         {
-            pin.signalEvents();
-        };
-
-        // change output pin
-        on(pin)
-        {
-            pinMode(pin.value(), OUTPUT);
+            if (pin > -1)
+            {
+                pinMode(pin.value(), OUTPUT);
+                state = Tstate::off;
+            }
+            else
+                state = Tstate::noPin;
         };
 
         // timer
@@ -168,8 +172,12 @@ public:
             if (action == Taction::___)
                 return;
 
-            // process action
-            if (action == Taction::on)
+            if (state == Tstate::noPin)
+            {
+                // nothing happens --> no pin defined
+            }
+            // process actions
+            else if (action == Taction::on)
             {
                 state = Tstate::on;
                 update();
