@@ -99,7 +99,7 @@ public:
         sdds_var(Tuint32, freeFlash_byte, sdds::opt::readonly);
 
 #if (PLATFORM_ID == PLATFORM_MSOM)
-        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / flashSectorSize_byte);
+        sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 8 * 1024 * 1024 / FflashSectorSize_byte);
 #elif (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_BORON)
         sdds_var(Tuint32, totalSectors, sdds::opt::readonly, 2 * 1024 * 1024 / FflashSectorSize_byte);
 #else
