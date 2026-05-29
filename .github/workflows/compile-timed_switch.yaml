@@ -1,5 +1,5 @@
 # name of the job
-name: timedswitch
+name: Timed Switch Example
 
 # specify which paths to watch for changes
 on:
@@ -21,7 +21,7 @@ jobs:
             lib: 'SDDS'
             aux: 'src'
         # CHANGE platforms as needed
-        platform: 
+        platform:
           - {name: 'p2', version: '6.3.4'}
 
     # program name
@@ -32,7 +32,7 @@ jobs:
     secrets: inherit
     with:
       platform: ${{ matrix.platform.name }}
-      version: ${{ matrix.platform.version }}      
+      version: ${{ matrix.platform.version }}
       program: ${{ matrix.program.name }}
       src: ${{ matrix.program.src || '' }}
       lib: ${{ matrix.program.lib || '' }}
