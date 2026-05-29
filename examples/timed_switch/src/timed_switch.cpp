@@ -229,7 +229,8 @@ public:
 class TsddsTree : public TmenuHandle
 {
 public:
-    sdds_var(TtimedSwitch, timedSwitch);
+    sdds_var(TtimedSwitch, timedSwitch1);
+    sdds_var(TtimedSwitch, timedSwitch2);
     TsddsTree() {}
 } sddsTree;
 
@@ -239,13 +240,15 @@ TserialSpike serialSpike(sddsTree, 115200);
 
 // particle spike for particle communication (with sdds name and version)
 #include "uParticleSpike.h"
-static TparticleSpike particleSpike(sddsTree, "timedSwitch", 101);
+static TparticleSpike particleSpike(sddsTree, "timedSwitch", 102);
 
 // setup
 void setup()
 {
-    // optional: any other configuration changes
-    pinMode(D7, INPUT);
+
+    // define pins for the 2 timed switches
+    sddsTree.timedSwitch1.pin = A2;
+    sddsTree.timedSwitch2.pin = A5;
 
     // setup particle spike
     particleSpike.setup();
