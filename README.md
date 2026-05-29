@@ -1,6 +1,7 @@
 [![ssds](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-sdds.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-sdds.yaml)
 [![led](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-led.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-led.yaml)
 [![adc](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-adc.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-adc.yaml)
+[![switch](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-timed_switch.yaml/badge.svg?branch=main)](https://github.com/KopfLab/SDDS_particleSpike/actions/workflows/compile-timed_switch.yaml)
 
 # SDDS particleSpike
 
