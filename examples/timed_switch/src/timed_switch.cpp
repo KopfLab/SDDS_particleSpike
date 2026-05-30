@@ -254,7 +254,7 @@ static TparticleSpike particleSpike(sddsTree, "timedSwitch", 102);
 void setup()
 {
 
-    // define pins for the 2 timed switches
+    // make sure to define pins for the 2 timed switches
     sddsTree.timedSwitch1.pin = A2;
     sddsTree.timedSwitch2.pin = A5;
 
