@@ -78,9 +78,35 @@ The `SYSTEM` structure provides access to the following SDDS variables:
   - **`nextGlobalPublish`** — _read-only_ — the time of the next global publish if `record` is on
   - **`varIntervals_ms`** — a mirror of the device's variable tree in which each entry sets how often that individual variable is published: `-1` = average over the global interval (while recording), `0` = never, `1` = on every change (while recording), `2` = on every change (always), or a positive number = a fixed interval in milliseconds. The [sddsParticle](https://github.com/KopfLab/sddsParticle) GUI makes this setting accessible more intuitively with dropdown option for each variable in the structure tree.
 
+## Communicating with the device
+
+The entire device — every setting, action, and live reading — is exposed as a single SDDS tree with the `SYSTEM` structure (described above) as its first entry. The primary way to view and control a device is the web-based [sddsParticle](https://github.com/KopfLab/sddsParticle) GUI, which reads a device's structure tree and automatically builds an editor for it. You can also interact with a device directly via the [Particle CLI](https://github.com/spark/particle-cli) (or the equivalent [Particle Cloud API](https://docs.particle.io/reference/api/) requests). All calls require being logged in (`particle login`) and only work for devices registered to your account.
+
+**Reading the tree** (Particle cloud variables):
+
+- `particle get <deviceID> getSddsValues` — the current values of all SDDS variables
+- `particle get <deviceID> getSdds` — the full structure tree (types + values)
+- `particle get <deviceID> getSddsSystem` — just the `SYSTEM` subtree (small enough to always fit in a single variable)
+- `particle get <deviceID> getSddsCommandLog` — the log of recently received commands and their result codes
+
+Because a single Particle variable is size-limited, `getSdds` and `getSddsValues` may return a response that is split across the `getSddsCh0`–`getSddsCh3` helper channels; the first character of each response indicates the channel and the number of transmissions still remaining. In practice, prefer capturing the published cloud events (see below) or the `sddsParticle` GUI, which reassemble these automatically.
+
+**Setting variables / issuing commands** (Particle cloud function `sdds`): assign values with a `path=value` syntax where the path uses `.` as the separator. Issue several assignments at once by separating them with spaces:
+
+```sh
+particle call <deviceID> sdds "led.ledSwitch=ON"
+particle call <deviceID> sdds "led.blinkSwitch=ON led.onTime_ms=200 led.offTime_ms=200"
+particle call <deviceID> sdds "SYSTEM.publishing.record=ON"
+particle call <deviceID> sdds "SYSTEM.action=saveState"
+```
+
+The return value is `0` when all assignments succeed. For a single failed assignment it is the negated error code (e.g. `-2` when the path could not be resolved — see the [error codes](lib/SDDS/src/uPlainCommErrors.h)); for a batch of assignments it is a bitmask flagging which of them failed (bit `i` set = assignment `i` failed). Special codes: `-200` = empty command, `-201` = more than 31 assignments in one call.
+
+**Pushing data to the cloud on demand** (Particle cloud functions): `sendSdds`, `sendSddsValues`, and `sendSddsState` publish the structure tree, all current values, or just the saveable state, respectively (each returns `-202` if the payload exceeds the 16 kB cloud-event limit, in which case use the `getSdds*` variables instead). The same three actions are also reachable through `SYSTEM.action` (`sendSdds` / `sendSddsValues` / `sendSddsState`). Regular data logging — recorded values, averaged values, and data bursts — is published on the cloud event named by `SYSTEM`→`publishing`→`event` (default **`sddsData`**) and is configured entirely through the `SYSTEM`→`publishing` settings (see [The SYSTEM structure](#the-system-structure) above). Nothing is published until `SYSTEM`→`publishing`→`record` is turned `ON`.
+
 ## How to compile on GitHub
 
-This happens automatically for all examples set up in the [GitHub workflows](.github/workflows) for each code push. For the [LED example](../../actions/workflows/compile-led.yaml), this is automatically done whenever there are changes to [the example source files](examples/led/src) or changes to the commit checked out for the SDDS submodule, and the compiler runs for 3 different firmware versions + platforms (Photon/Argon/P2). The binaries (if compilation is successful) are stored as artifacts in the workflow runs for each firmware + platform under the *Upload binary* step. The compiler output for each platform is available under the *Compile locally* step.
+This happens automatically for all examples set up in the [GitHub workflows](.github/workflows) for each code push. For the [LED example](../../actions/workflows/compile-led.yaml), this is automatically done whenever there are changes to [the example source files](examples/led/src) or to this library's own [source files](src), and the compiler runs for 3 different platforms (P2/Boron/M-SoM, all on device-OS 6.3.4). The set of platforms is defined by the `matrix.platform` list in each program's `compile-<program>.yaml` (some examples build for P2 only). The binaries (if compilation is successful) are stored as artifacts in the workflow runs for each platform under the *Upload binary* step. The compiler output for each platform is available under the *Compile locally* step.
 
 ## How to compile in the cloud
 
@@ -89,17 +115,19 @@ To compile from a local code copy in the cloud:
  - clone this repository and all submodules (`git clone --recurse-submodules https://github.com/KopfLab/SDDS_particleSpike`, see [dependencies](#dependencies) for details)
  - install the [Particle Cloud command line interface (CLI)](https://github.com/spark/particle-cli)
  - log into your account with `particle login`
- - from the root of this repo directory, run `particle compile p2 examples/led lib/SDDS/src --target 6.3.2 --saveTo bin/led-p2-6.3.2.bin` (for the photon2 platform and firmware version 6.3.2)
- - alternatively, install ruby gems with `bundle install` and run `rake led` to compile in the cloud (the [Rakefile](Rakefile) provides some other useful shortcats to the particle cli, list them with `rake help`)
- - for development with cloud compile, start the guardfile with `bundle exec guard` and it will recompile the latest binaries (e.g. `led-p2-6.3.2.bin`) whenever there are any code changes
+ - from the root of this repo directory, run `particle compile p2 examples/led lib/SDDS/src --target 6.3.4 --saveTo bin/led-p2-6.3.4.bin` (for the photon2 platform and firmware version 6.3.4)
+ - alternatively, install ruby gems with `bundle install` and run `rake led` to compile in the cloud (the [Rakefile](Rakefile) provides some other useful shortcuts to the particle cli, list them with `rake help`, and the compilable programs with `rake programs`)
+ - for development with cloud compile, prime the target once with `rake <program>` and then start auto-recompiling with `rake autoCompile` (or do both in one step with `rake dev <program>`, which also flashes on each change); this watches the source globs defined in the program's `compile-<program>.yaml` and recompiles the latest binary (e.g. `led-p2-6.3.4.bin`) whenever there are code changes
 
-## How co compile locally
+## How to compile locally
 
 To compile locally from a local code copy:
 
  - install the VS Code extension for the Particle Toolbench following the instructions at https://docs.particle.io/getting-started/developer-tools/workbench/
  - enable pre-release versions of the tool chain as shown here: https://docs.particle.io/getting-started/developer-tools/workbench/#enabling-pre-release-versions
- - use the functionality of the VSCode extension (`Particle: Install Local Compiler Toolchain / Configure Project for device / Compile Appliation (local)`) to select a device OS toolchain (recommended: 6.3.2) and target platform (recommended: P2), and then run the compiler locally with `rake guardLocal` which automatically copies sources of the last cloud-compiled firmware into `local/` and compiles from there whenever something changes (and flashes the new code to a connected device via USB); if you're switching to a different example or have changes in a library, it is recommended to run `rake cleanLocal` before resuming with `rake guardLocal`
+ - use the functionality of the VSCode extension (`Particle: Install Local Compiler Toolchain / Configure Project for device / Compile Appliation (local)`) to select a device OS toolchain (recommended: 6.3.4) and target platform (recommended: P2)
+ - run `rake local <program>` (e.g. `rake local led`) to compile a program with the local toolchain — this mirrors the program's sources into `local/` and compiles from there, saving the result as e.g. `bin/led-p2-6.3.4-local.bin`
+ - for local development, use `rake dev <program>` which compiles locally, flashes the connected device via USB, and then watches the program's sources to auto-recompile and re-flash on every change; if you're switching to a different example, platform, or version, run `rake cleanLocal` first to clear stale files out of `local/`
 
 ## Dependencies
 
