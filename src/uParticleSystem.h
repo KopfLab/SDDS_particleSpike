@@ -79,7 +79,7 @@ public:
 
 // random access memory (RAM, in bytes)
 #if (PLATFORM_ID == PLATFORM_ARGON || PLATFORM_ID == PLATFORM_BORON)
-        sdds_var(Tuint32, totalRAM_B, sdds::opt::readonly, 80 * 1024); // approximately 80 KB
+        sdds_var(Tuint32, totalRAM_byte, sdds::opt::readonly, 80 * 1024); // approximately 80 KB
 #elif (PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_MSOM)
         sdds_var(Tuint32, totalRAM_byte, sdds::opt::readonly, 3 * 1024 * 1024); // approximately 3 MB
 #else
