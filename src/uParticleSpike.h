@@ -298,6 +298,32 @@ private:
 
 	public:
 		/**
+		 * @brief format a unix time in milliseconds as an ISO8601 timestamp with
+		 * millisecond precision (e.g. 2026-04-10T15:20:32.123Z)
+		 * note: the per data point offsets ("o") are in milliseconds, so a time base
+		 * that only resolves whole seconds would throw all of them off by up to a second
+		 */
+		static String formatTime_ms(dtypes::int64 _unix_ms)
+		{
+			// floored division so that the millisecond part is never negative
+			dtypes::int64 sec = _unix_ms / 1000;
+			dtypes::int32 ms = static_cast<dtypes::int32>(_unix_ms - sec * 1000);
+			if (ms < 0)
+			{
+				ms += 1000;
+				sec -= 1;
+			}
+			// splice the milliseconds in ahead of the time zone (Z for UTC) instead of
+			// hardcoding the suffix so this keeps working if the time zone is ever changed
+			time_t t = static_cast<time_t>(sec);
+			char buf[48];
+			snprintf(buf, sizeof(buf), "%s.%03d%s",
+					 Time.format(t, "%Y-%m-%dT%H:%M:%S").c_str(), static_cast<int>(ms),
+					 Time.format(t, "%z").c_str());
+			return (String(buf));
+		}
+
+		/**
 		 * @brief serialize tree as variant
 		 * @param _withKeys whether to include the identifier keys or use unnamed entries
 		 */
@@ -379,7 +405,7 @@ private:
 		{
 			Variant var;
 			var.set(FstateDeviceNameKey, particleSystem().name.c_str());
-			var.set(FstateTimeBaseKey, Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL));
+			var.set(FstateTimeBaseKey, formatTime_ms(particleSystem().unixTime_ms()));
 			var.set(FstateDataKey, serializeValues(_struct, true, sdds::opt::saveval, true));
 			return var;
 		}
@@ -462,8 +488,10 @@ private:
 			// time base (if valid time, otherwise NULL and the offset is machine time in millis)
 			if (Time.isValid())
 			{
-				time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float64>(millis() - _refTime) / 1000));
-				burst.set(FburstTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
+				// note: the elapsed time is kept in exact milliseconds (unsigned tick subtraction,
+				// correct across the ~49.7 day millis() wrap around) instead of being rounded to
+				// whole seconds, so that the time base carries the same resolution as the offsets
+				burst.set(FburstTimeBaseKey, formatTime_ms(particleSystem().unixTime_ms(millis() - _refTime)));
 			}
 			else
 			{
@@ -537,8 +565,7 @@ private:
 			// time base (if valid time, otherwise NULL)
 			if (Time.isValid())
 			{
-				time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float64>(System.millis() - _refTime - _timeShift) / 1000));
-				var.set(FvarLogTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
+				var.set(FvarLogTimeBaseKey, formatTime_ms(particleSystem().unixTime_ms(System.millis() - _refTime - _timeShift)));
 			}
 			else
 			{

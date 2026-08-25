@@ -173,7 +173,44 @@ sdds_var(TdebugAction, debug)  // debug actions
     // time stamp for the clock update
     time32_t FlastNow = 0;
 
+    // millisecond epoch anchor
+    // Time.now() only resolves whole seconds and on some platforms the RTC has no
+    // sub second component at all (the P2's hal_rtc_get_time() always returns
+    // tv_usec = 0, the Boron's does carry microseconds), so a millisecond time base
+    // cannot be read out directly. Instead the tick counter is anchored to the wall
+    // clock every time a second rollover is observed on the system check timer: the
+    // rollover happened somewhere between the previous sample and this one, so the
+    // anchor is placed at the midpoint of that window. This keeps the anchor error
+    // bounded by roughly half the check interval and, because it is re-established
+    // on every rollover, free of drift.
+    bool FhasNowSample = false;         // is there a previous Time.now() sample to bracket against?
+    bool FepochAnchored = false;        // has a second rollover been observed?
+    dtypes::uint64 FlastNowTick_ms = 0; // tick of the previous Time.now() sample
+    dtypes::uint64 FepochUnix_ms = 0;   // unix time at the anchor [ms]
+    dtypes::uint64 FepochTick_ms = 0;   // System.millis() tick at the anchor
+
 public:
+    /**
+     * @brief has a second rollover been observed, i.e. is unixTime_ms() millisecond precise?
+     */
+    bool epochAnchored() { return FepochAnchored; }
+
+    /**
+     * @brief unix time in milliseconds for an event that happened _elapsed_ms ago
+     * @param _elapsed_ms how long ago the event happened [ms], 0 for right now
+     * note: pass the elapsed time rather than the tick itself so that callers can use
+     * either the 32bit millis() or the 64bit System.millis() time base
+     * note: until the epoch is anchored this falls back to the whole second resolution
+     * of Time.now(), which is still exact in the elapsed time, just not in the anchor
+     */
+    dtypes::int64 unixTime_ms(dtypes::uint64 _elapsed_ms = 0)
+    {
+        dtypes::int64 now_ms = (FepochAnchored)
+                                   ? static_cast<dtypes::int64>(FepochUnix_ms) + static_cast<dtypes::int64>(System.millis() - FepochTick_ms)
+                                   : static_cast<dtypes::int64>(Time.now()) * 1000;
+        return (now_ms - static_cast<dtypes::int64>(_elapsed_ms));
+    }
+
     TparticleSystem()
     {
 
@@ -355,11 +392,36 @@ public:
                 FresyncSysTime = false;
             }
 
-            // update time sdds_var
-            if (Time.isValid() && Time.now() > FlastNow)
+            // update time sdds_var and re-anchor the millisecond epoch on each second rollover
+            if (Time.isValid())
             {
-                FlastNow = Time.now();
-                vitals.time_dt = Time.format(FlastNow, TIME_FORMAT_ISO8601_FULL); //"%Y-%m-%d %H:%M:%S %Z");
+                dtypes::uint64 tick_ms = System.millis();
+                time32_t now = Time.now();
+                if (now != FlastNow)
+                {
+                    // only a plain second-by-second increment brackets a real second boundary:
+                    // the first sample after the clock becomes valid says nothing about where
+                    // in the second we are, and a time sync can step the clock by an arbitrary
+                    // amount - neither may be used as an anchor (the next genuine rollover,
+                    // at most a second later, re-anchors)
+                    if (FhasNowSample && now == FlastNow + 1)
+                    {
+                        FepochUnix_ms = static_cast<dtypes::uint64>(now) * 1000;
+                        FepochTick_ms = FlastNowTick_ms + (tick_ms - FlastNowTick_ms) / 2;
+                        FepochAnchored = true;
+                    }
+                    if (now > FlastNow)
+                        vitals.time_dt = Time.format(now, TIME_FORMAT_ISO8601_FULL); //"%Y-%m-%d %H:%M:%S %Z");
+                    FlastNow = now;
+                }
+                FlastNowTick_ms = tick_ms;
+                FhasNowSample = true;
+            }
+            else
+            {
+                // clock is not (or no longer) valid --> the anchor cannot be trusted
+                FhasNowSample = false;
+                FepochAnchored = false;
             }
 
             // trigger name handler
