@@ -887,14 +887,6 @@ private:
 		const system_tick_t FpublishcheckInterval = 200; // publish status check timer [ms]
 		Ttimer FpublishCheckTimer;						 // publish check timer
 
-		/**
-		 * @brief check if we're ready to publish (need a name and valid time)
-		 */
-		bool readyToPublish()
-		{
-			return particleSystem().name != "" && Time.isValid();
-		}
-
 		void printVariant(const Variant &data)
 		{
 			if (Log.isTraceEnabled())
@@ -915,6 +907,17 @@ private:
 		}
 
 	public:
+		/**
+		 * @brief check if we're ready to publish (need a name and valid time)
+		 * note: after a cold power up the RTC starts at 2000-01-01 and Time.isValid() stays
+		 * false until the cloud syncs the clock, so anything that carries an absolute time
+		 * base has to wait for this before it can be serialized
+		 */
+		bool readyToPublish()
+		{
+			return particleSystem().name != "" && Time.isValid();
+		}
+
 		// constructor + logic
 		TparticlePublisher()
 		{
@@ -1814,6 +1817,16 @@ private:
 	constexpr static int ERR_NO_CMD = -200;
 	constexpr static int ERR_CMDS_MAX = -201;
 	constexpr static int ERR_EVENT_SIZE_MAX = -202;
+	constexpr static int ERR_NOT_READY = -203;
+
+	// deferred startup state snapshot
+	// a state snapshot carries an absolute time base (tb) instead of offsets, but on a cold
+	// power up the RTC only becomes valid once the cloud syncs the clock, which is several
+	// seconds after sdds::setup() runs. Publishing the snapshot is thus deferred until the device
+	// is actually ready to publish.
+	bool FstartupStatePending = false;
+	Ttimer FstartupStateTimer;
+	const system_tick_t FstartupStateCheckInterval = 1000; // [ms]
 
 	// command log
 	// note: 64bit System.millis() ticks rather than 32bit millis() ones because log entries
@@ -1979,6 +1992,11 @@ private:
 	 */
 	int publishState(String _cmd)
 	{
+		// the snapshot's time base (tb) is an absolute timestamp rather than an offset, so
+		// refuse to serialize it before the wall clock is valid and the name is known
+		if (!Fpublisher.readyToPublish())
+			return ERR_NOT_READY;
+
 		Variant state = TparticleSerializer::serializeParticleState(Froot);
 		if (!Fpublisher.queueData(state))
 			// the state is oo large to publish, must use sddsGetValues instead
@@ -2124,6 +2142,27 @@ public:
 				FglobalPublishInfoTimer.start(1000); // restart
 		};
 
+		// deferred startup state snapshot (waits for the wall clock, see FstartupStatePending)
+		on(FstartupStateTimer)
+		{
+			if (!FstartupStatePending)
+				return;
+			if (particleSystem().publishing.record != TonOff::ON)
+			{
+				// recording was turned off while waiting --> don't send the snapshot after all
+				FstartupStatePending = false;
+				return;
+			}
+			if (!Fpublisher.readyToPublish())
+			{
+				// no valid wall clock and/or no device name yet --> check back later
+				FstartupStateTimer.start(FstartupStateCheckInterval);
+				return;
+			}
+			FstartupStatePending = false;
+			publishState("");
+		};
+
 		// startup complete
 		on(sdds::setup())
 		{
@@ -2142,9 +2181,12 @@ public:
 			publishVariable(&particleSystem().state.status);
 
 			// publish state if we're publishing and autosend on startup is on
+			// note: not published right here - the wall clock is typically not yet synced at
+			// this point after a cold boot, see FstartupStatePending
 			if (particleSystem().publishing.record == TonOff::ON && particleSystem().state.autoSendOnStartup == TonOff::ON)
 			{
-				publishState("");
+				FstartupStatePending = true;
+				FstartupStateTimer.start(FstartupStateCheckInterval);
 			}
 		};
 
