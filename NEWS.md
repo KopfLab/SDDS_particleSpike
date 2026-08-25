@@ -1,0 +1,44 @@
+# SDDS particleSpike 0.2.0
+
+This release is focused entirely on the **time base (`tb`)** that data bursts,
+command logs and state snapshots are published with. All of the issues below
+could put a wrong absolute timestamp on published data without any error being
+raised, so devices that have been running for a long time (or that were just
+cold-booted) may have logged data with timestamps that are off.
+
+## Millisecond precision time base
+
+The `tb` of every payload is now published as an ISO8601 timestamp **with
+milliseconds** (e.g. `2026-04-10T15:20:32.123Z`) instead of being rounded to
+whole seconds. The per data point offsets (`o`) have always been in
+milliseconds, so a whole second time base threw every point off by up to half a
+second.
+
+## Fixed: 32 bit tick overflows corrupting the time base
+
+`millis()` is a 32 bit millisecond counter and wraps every ~49.7 days. Several
+places compared or combined those ticks in ways that broke at or before the wrap.
+
+## Fixed: command log time base going stale by 49.7 days
+
+Command log entries are only evicted when the log buffer overflows, never by age,
+so an entry can easily outlive the `millis()` wrap. When it did, the whole log's
+time base jumped forward by exactly 49.7 days. The command log now keeps its ticks
+in **64 bit `System.millis()` time base**.
+
+## Fixed: state snapshots stamped 2000-01-01 after a cold boot
+
+A state snapshot published on startup could be stamped `2000-01-01T00:00:01`.
+The startup snapshot is now **deferred** until the device is genuinely ready to
+publish (valid wall clock and known device name), retrying once a second. 
+`publishState()` also refuses outright when the clock is not valid, returning 
+the new error code `ERR_NOT_READY` (-203), which covers the `sendSddsState` 
+function and the `SYSTEM.action` entry point as well. 
+
+Note that the snapshot now reflects the state as of clock sync rather than as of
+boot. `loadState()` completes before either point, so this is the same data unless
+a value is changed over serial in the intervening seconds.
+
+# SDDS particleSpike 0.1.0
+
+Initial release.
