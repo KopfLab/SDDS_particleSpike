@@ -680,7 +680,14 @@ private:
 			String Fresponse = "";
 			size_t Fchannel = 0;
 			size_t FbytesStart = 0;
+			bool Fused = false; // explicit flag, a tick of 0 is a legitimate FlastUsed
 			system_tick_t FlastUsed = 0;
+
+			void markUsed()
+			{
+				Fused = true;
+				FlastUsed = millis();
+			}
 
 		public:
 			Tchannel() {}
@@ -691,10 +698,14 @@ private:
 				return (FbytesStart < Fresponse.length()) ? Fresponse.length() - FbytesStart : 0;
 			}
 			bool idle() { return Fresponse.length() == 0; }
-			bool neverUsed() { return FlastUsed == 0; }
-			bool isOlder(system_tick_t _lastUsed)
+			bool neverUsed() { return !Fused; }
+			bool isOlderThan(system_tick_t _lastUsed)
 			{
-				return !neverUsed() && (_lastUsed == 0 || FlastUsed < _lastUsed);
+				// note: signed tick difference instead of a plain < comparison of the absolute
+				// tick values so that the least-recently-used selection stays correct across
+				// the ~49.7 day millis() wrap around (otherwise a channel used right after the
+				// wrap looks older than one used before it and gets evicted while still in use)
+				return static_cast<dtypes::TtickCount_signed>(FlastUsed - _lastUsed) < 0;
 			}
 			system_tick_t lastUsed() { return FlastUsed; }
 			void release() { assign(""); }
@@ -717,7 +728,7 @@ private:
 			{
 				Fresponse = _response;
 				FbytesStart = 0;
-				FlastUsed = millis();
+				markUsed();
 				if (_response.length() > 0)
 				{
 					Log.trace("assigned new value to channel '%c' (idx %d): %d bytes, %d transmissions: ",
@@ -730,7 +741,7 @@ private:
 			{
 				if (getBytesRemaining() == 0)
 					return ("-");
-				FlastUsed = millis();
+				markUsed();
 				size_t remaining = getTransmissionsRemaining();
 				remaining = (remaining < 1) ? 0 : remaining - 1;
 				// format: transmissions remaining + actual data
@@ -770,8 +781,10 @@ private:
 			// find channel to use
 			size_t channel = 0;
 			size_t oldestFreeChannel = 0;
+			bool foundFreeChannel = false;
 			system_tick_t oldestFreeLastUsed = 0;
 			size_t oldestInUseChannel = 0;
+			bool foundInUseChannel = false;
 			system_tick_t oldestInUseLastUsed = 0;
 			bool foundChannel = false;
 			for (size_t i = 0; i < N_CHANNELS; i++)
@@ -783,23 +796,28 @@ private:
 					foundChannel = true;
 					break;
 				}
-				// check for oldest free channel
-				if (Fchannels[i].idle() && Fchannels[i].isOlder(oldestFreeLastUsed))
+				// check for oldest free channel (all idle channels reaching here have been used)
+				if (Fchannels[i].idle())
 				{
-					oldestFreeChannel = i;
-					oldestFreeLastUsed = Fchannels[i].lastUsed();
+					if (!foundFreeChannel || Fchannels[i].isOlderThan(oldestFreeLastUsed))
+					{
+						oldestFreeChannel = i;
+						oldestFreeLastUsed = Fchannels[i].lastUsed();
+						foundFreeChannel = true;
+					}
 				}
 				// check for oldest channel that's in use
-				if (!Fchannels[i].idle() && Fchannels[i].isOlder(oldestInUseLastUsed))
+				else if (!foundInUseChannel || Fchannels[i].isOlderThan(oldestInUseLastUsed))
 				{
 					oldestInUseChannel = i;
 					oldestInUseLastUsed = Fchannels[i].lastUsed();
+					foundInUseChannel = true;
 				}
 			}
 			// if no unsed channel, use the oldest free (if there are any), or the oldest in use
 			if (!foundChannel)
 			{
-				channel = (oldestFreeLastUsed > 0) ? oldestFreeChannel : oldestInUseChannel;
+				channel = (foundFreeChannel) ? oldestFreeChannel : oldestInUseChannel;
 			}
 			// assign to channel and return initial message
 			// format: base64 channel ID + base64 remaining transmissions + actual data
@@ -989,7 +1007,11 @@ private:
 				return;
 
 			// keep track of min time
-			if (FminTime == 0 || FminTime > _time)
+			// note: FburstData being empty (rather than FminTime being 0) is the "no reference
+			// time yet" flag so that a legitimate tick of 0 does not permanently pin the burst
+			// time base to boot time, and the comparison goes through a signed tick difference
+			// so it stays correct across the ~49.7 day millis() wrap around
+			if (FburstData.empty() || static_cast<dtypes::TtickCount_signed>(_time - FminTime) < 0)
 				FminTime = _time;
 
 			// add to existing burst data for this variable
@@ -1110,13 +1132,19 @@ private:
 		// publishing
 		TparticlePublisher *Fpublisher = nullptr;
 		system_tick_t FlastUpdateTime = 0;
+		bool FhasUpdate = false; // explicit flag, a tick of 0 is a legitimate FlastUpdateTime
+		void markUpdated()
+		{
+			FlastUpdateTime = millis();
+			FhasUpdate = true;
+		}
 		virtual void clear() {}
 		virtual void changeValue()
 		{
 			if (!FhasPreviousValue || isValueDifferent())
 			{
 				// by default, only update if the value is different
-				FlastUpdateTime = millis();
+				markUpdated();
 			}
 		}
 		virtual system_tick_t getTimeForPublish()
@@ -1218,6 +1246,7 @@ private:
 		void reset()
 		{
 			FlastUpdateTime = 0; // reset to no value
+			FhasUpdate = false;
 			clear();
 		}
 
@@ -1239,7 +1268,7 @@ private:
 			}
 
 			// otherwise we're publishing as INHERIT --> check first if there is a recent value
-			if (FlastUpdateTime == 0)
+			if (!FhasUpdate)
 				return;
 
 			// okay publishing the collected data
@@ -1328,6 +1357,7 @@ private:
 
 		// keeping track of time
 		bool FhasFirstValue = false;
+		bool FhasLatestValue = false;		// explicit flag, a tick of 0 is a legitimate FlatestTime
 		dtypes::TtickCount FstartTime = 0;	// start time of the averaged value
 		dtypes::TtickCount FlatestTime = 0; // last time a value was received
 		dtypes::float64 FlatestValue = 0;	// last value that was received
@@ -1339,13 +1369,15 @@ private:
 		void addLatest()
 		{
 			// do we already have a value? --> add it to the running stats
-			if (FlatestTime > 0)
+			if (FhasLatestValue)
 			{
+				// note: unsigned tick subtraction, correct across the ~49.7 day millis() wrap around
 				rs.add(FlatestValue, millis() - FlatestTime);
 			}
 			// store the latest time and value
 			FlatestValue = static_cast<dtypes::float64>(this->originValue());
 			FlatestTime = millis();
+			FhasLatestValue = true;
 		}
 
 	protected:
@@ -1372,6 +1404,7 @@ private:
 			bool carryOver = (rs.count() > 0);
 			rs.reset(); // restart running stats
 			FlatestTime = 0;
+			FhasLatestValue = false;
 			FhasFirstValue = false;
 			if (carryOver)
 				changeValue();
@@ -1380,7 +1413,7 @@ private:
 		void changeValue() override
 		{
 			// always triggers update for continuously collected values even if value is the same
-			this->FlastUpdateTime = millis();
+			this->markUpdated();
 			// first value?
 			if (!FhasFirstValue)
 			{
@@ -1400,7 +1433,12 @@ private:
 			else
 			{
 				// multi point -> return middle of time interval
-				return (millis() + FstartTime) / 2;
+				// note: must be calculated as start + elapsed/2 rather than (now + start)/2
+				// because the latter overflows the 32bit unsigned tick counter as soon as
+				// millis() + FstartTime exceeds 2^32 (i.e. after ~24.9 days of uptime) and
+				// is also incorrect across the ~49.7 day millis() wrap around, both of which
+				// lead to a corrupted burst time base (tb)
+				return FstartTime + (static_cast<system_tick_t>(millis() - FstartTime) / 2);
 			}
 		}
 
@@ -2027,7 +2065,9 @@ public:
 			{
 				particleSystem().publishing.nextGlobalPublish = "off";
 			}
-			else if (FnextGlobalPublish > millis())
+			// note: signed tick difference instead of a plain > comparison so this stays
+			// correct once millis() + globalInterval_ms wraps the 32bit tick counter
+			else if (static_cast<dtypes::TtickCount_signed>(FnextGlobalPublish - millis()) > 0)
 			{
 				char buf[20]; // snprintf buffer
 				dtypes::uint32 diff = static_cast<dtypes::uint32>(round((FnextGlobalPublish - millis()) / 1000.));
