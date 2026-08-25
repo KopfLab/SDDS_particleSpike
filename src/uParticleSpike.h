@@ -483,9 +483,12 @@ private:
 
 		/**
 		 * @brief serialize a command with it's return code and message
+		 * @param _time offset of the command from the log's time base [ms]
+		 * note: the command log keeps its ticks in the 64bit System.millis() time base rather
+		 * than the 32bit millis() one, see serializeCommandLog() for why
 		 * @todo do we need a version with keys here? probably fine as array
 		 */
-		static Variant serializeCommand(system_tick_t _time, const String &_cmd, int _code, const char *_msg)
+		static Variant serializeCommand(dtypes::uint64 _time, const String &_cmd, int _code, const char *_msg)
 		{
 			Variant var;
 			var.append(_time);
@@ -497,10 +500,15 @@ private:
 
 		/**
 		 * @brief serialize command log
-		 * @param _refTime the time base of all the commands in the provided log
-		 * @param _timeShift how much to shift ("time rebase") the logs in addition
+		 * @param _refTime the time base of all the commands in the provided log [System.millis() ticks]
+		 * @param _timeShift how much to shift ("time rebase") the logs in addition [ms]
+		 * note: unlike the data bursts, log entries are only ever evicted when the log buffer
+		 * overflows, never by age, so an entry can outlive the ~49.7 day wrap around of the
+		 * 32bit millis() counter. The command log therefore uses the 64bit System.millis()
+		 * time base, which never wraps, so that the time base (tb) stays correct no matter
+		 * how long the device has been up or how old the oldest retained entry is
 		 */
-		static Variant serializeCommandLog(system_tick_t _refTime, system_tick_t _timeShift, const Variant &_log)
+		static Variant serializeCommandLog(dtypes::uint64 _refTime, dtypes::uint64 _timeShift, const Variant &_log)
 		{
 			// rebase the logs
 			Variant rebasedLog;
@@ -512,7 +520,7 @@ private:
 					if (_timeShift > 0 && entry.isArray() && !entry.isEmpty())
 					{
 						// shift time
-						system_tick_t offset = entry[0].toUInt();
+						dtypes::uint64 offset = entry[0].toUInt64();
 						entry.removeAt(0);
 						if (offset > _timeShift)
 							entry.prepend(offset - _timeShift);
@@ -529,7 +537,7 @@ private:
 			// time base (if valid time, otherwise NULL)
 			if (Time.isValid())
 			{
-				time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float64>(millis() - _refTime - _timeShift) / 1000));
+				time_t timeBase = Time.now() - static_cast<time_t>(round(static_cast<dtypes::float64>(System.millis() - _refTime - _timeShift) / 1000));
 				var.set(FvarLogTimeBaseKey, Time.format(timeBase, TIME_FORMAT_ISO8601_FULL));
 			}
 			else
@@ -1781,10 +1789,12 @@ private:
 	constexpr static int ERR_EVENT_SIZE_MAX = -202;
 
 	// command log
-	system_tick_t FcmdLogMinTime = 0; // earliest time in the log
+	// note: 64bit System.millis() ticks rather than 32bit millis() ones because log entries
+	// are only evicted on buffer overflow and can therefore outlive the ~49.7 day wrap around
+	dtypes::uint64 FcmdLogMinTime = 0; // earliest time in the log
 	char FcmdLog[particle::protocol::MAX_FUNCTION_ARG_LENGTH] = "[]\0";
 
-	void logCommand(system_tick_t _time, const String &_cmd, int _errCode, const char *_errText)
+	void logCommand(dtypes::uint64 _time, const String &_cmd, int _errCode, const char *_errText)
 	{
 		// append to sddslog cloud var Variant array
 		Variant cmd_log = TparticleSerializer::deserializeCommandLog(FcmdLog);
@@ -1801,11 +1811,11 @@ private:
 		if (!cmd_log.isEmpty())
 		{
 			// store back in the cloud log particle variable
-			system_tick_t timeRebaseShift = 0;
+			dtypes::uint64 timeRebaseShift = 0;
 			if (cmd_log[0].isArray() && !cmd_log[0].isEmpty())
 			{
 				// rebased based on first entry if there is one
-				timeRebaseShift = cmd_log[0][0].toUInt();
+				timeRebaseShift = cmd_log[0][0].toUInt64();
 			}
 			Variant log = TparticleSerializer::serializeCommandLog(FcmdLogMinTime, timeRebaseShift, cmd_log);
 			snprintf(FcmdLog, particle::protocol::MAX_FUNCTION_ARG_LENGTH, "%s", log.toJSON().c_str());
@@ -1826,7 +1836,7 @@ private:
 	{
 		// parse _cmds into individual commands
 		std::vector<String> cmds;
-		system_tick_t timestamp = millis();
+		dtypes::uint64 timestamp = System.millis();
 		size_t start = 0;
 		for (size_t i = 0; i < _cmd.length(); ++i)
 		{
