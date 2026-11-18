@@ -52,6 +52,10 @@ The `SYSTEM` structure provides access to the following SDDS variables:
 - **`name`** — _read-only, saveable_ — the cloud-assigned device name
 - **`startup`** — _read-only_ — startup progress (`___` → `complete`).
 - **`internet`** — _read-only_ — cloud connection status (`connecting`, `connected`, `disconnected`).
+- **`bluetooth`** — bluetooth settings and status (see [Bluetooth](#bluetooth))
+  - **`state`** — _saveable_ — turn bluetooth `ON` (default) or `OFF`. `OFF` disconnects any client and turns bluetooth off entirely (the device is no longer discoverable); save the state to keep it off across restarts.
+  - **`status`** — _read-only_ — `off`, `discoverable` (on, waiting for a connection) or `connected`
+  - **`connection`** — _read-only_ — the connected client: the name it announced (e.g. `Chrome on macOS (xx:xx:xx:xx:xx:xx)`) or just its bluetooth address (which phones and computers usually randomize); empty if no client is connected. Note: the signal strength of a bluetooth connection is not available (Device OS does not support it).
 - **`state`** — persisted-state (save/load) information
   - **`status`** — _read-only_ — `normal`, `reset`, `failedLoad` or `failedSave`.
   - **`autoSendOnStartup`** — _saveable_ — send all data once on startup if recording is on
@@ -103,6 +107,24 @@ particle call <deviceID> sdds "SYSTEM.action=saveState"
 The return value is `0` when all assignments succeed. For a single failed assignment it is the negated error code (e.g. `-2` when the path could not be resolved — see the [error codes](lib/SDDS/src/uPlainCommErrors.h)); for a batch of assignments it is a bitmask flagging which of them failed (bit `i` set = assignment `i` failed). Special codes: `-200` = empty command, `-201` = more than 31 assignments in one call.
 
 **Pushing data to the cloud on demand** (Particle cloud functions): `sendSdds`, `sendSddsValues`, and `sendSddsState` publish the structure tree, all current values, or just the saveable state, respectively (each returns `-202` if the payload exceeds the 16 kB cloud-event limit, in which case use the `getSdds*` variables instead). The same three actions are also reachable through `SYSTEM.action` (`sendSdds` / `sendSddsValues` / `sendSddsState`). Regular data logging — recorded values, averaged values, and data bursts — is published on the cloud event named by `SYSTEM`→`publishing`→`event` (default **`sddsData`**) and is configured entirely through the `SYSTEM`→`publishing` settings (see [The SYSTEM structure](#the-system-structure) above).
+
+## Bluetooth
+
+On platforms with Bluetooth LE (e.g. Photon 2 / P2, Argon, Boron), the particle spike also gives access to the entire SDDS tree via bluetooth, without any internet connection. The device advertises a [Nordic UART Service](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html) under its cloud device name (`SYSTEM.name`, or its device type until the name is known) and speaks the same line-based protocol as the [SDDS serial spike](https://github.com/mLamneck/SDDS) (`T` = type tree, `L <port> <path>` / `U <port>` = subscribe/unsubscribe, `path` = read, `path=value` = write; each message is terminated by a newline). Compatible clients include web pages using Web Bluetooth (Chrome/Edge on desktop and Android, the Bluefy browser on iOS) and generic "BLE UART" terminal apps (nRF Connect, Bluefruit Connect, Serial Bluetooth Terminal).
+
+- Responses are split into notifications of up to `ATT MTU - 3` bytes (244 bytes on the P2 if the client negotiates the maximum MTU, 20 bytes otherwise) that the client reassembles up to the newline.
+- Clients can identify themselves by sending `@client <description>`, which is shown in `SYSTEM.bluetooth.connection`.
+- Only one client can be connected at a time. There is no pairing/authentication: anyone in range can connect and change settings — set `SYSTEM.bluetooth.state=OFF` to turn bluetooth off (and save the state to keep it off after restarts).
+- Bluetooth starts once the saved state is loaded at start-up, so a device whose saved `SYSTEM.bluetooth.state` is `OFF` never becomes discoverable.
+- Implementation: [`src/uBleSpike.h`](src/uBleSpike.h) (`TbleSpike`), managed automatically by `TparticleSpike`.
+
+## Local SDDS browser
+
+[`assets/sddsBrowser.html`](assets/sddsBrowser.html) is a self-contained web page (no dependencies) that connects to a device either via **Bluetooth** (Web Bluetooth, see above) or via **USB serial** (Web Serial, for devices running the SDDS serial spike `TserialSpike` at 115200 baud, as in the examples), shows its SDDS tree with live values (only expanded structs are subscribed to, to keep bluetooth traffic low), lets you edit values/trigger actions, and has a raw command console. To launch it locally run `rake sddsBrowser`. Stop the server with `Ctrl+C`. Alternatively, any static web server works (e.g. `python3 -m http.server -d assets 8000`, then open `http://localhost:8000/sddsBrowser.html`.
+
+*Connect Serial* works the same way as *Connect Bluetooth* but needs no bluetooth (and no cloud connection). The serial port can only be open in one place at a time, so stop any serial monitor (`rake monitor`) first. Any other output on the serial port (e.g. from a `SerialLogHandler`) shows up in the page's console; if log messages get printed in the middle of a long response (e.g. the type tree), that response can't be parsed - use *Reload tree*.
+
+Web Bluetooth and Web Serial only work in a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) (`https://` or `http://localhost`) Web Bluetooth is supported by Chrome/Edge on macOS, Windows, Linux, ChromeOS and Android, but not by Safari/iOS - on iPhones, use the Bluefy browser app (App Store) instead. Web Serial is supported by Chrome/Edge on desktop computers only.
 
 ## How to compile on GitHub
 
