@@ -1399,6 +1399,12 @@ private:
 			return TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit);
 		}
 
+		// averaging suspended? (see suspendAveraging)
+		bool Fsuspended = false;
+		virtual void onSuspend() {}
+		virtual void onResume() {}
+		bool isAveraging() { return Fvalue == publish::AVG_GLOBAL || Fvalue > publish::MAX; }
+
 	public:
 		TparticleVarWrapper(Tdescr *_voi, TparticlePublisher *_pub, Tdescr *_unit) : FvarOrigin(_voi), Fpublisher(_pub), FlinkedUnit(_unit)
 		{
@@ -1416,9 +1422,9 @@ private:
 						if (!FhasPreviousValue || isValueDifferent())
 							publish();
 					}
-					else
+					else if (!Fsuspended)
 					{
-						// collect values
+						// collect values (not while averaging is suspended)
 						changeValue();
 					}
 				}
@@ -1471,6 +1477,23 @@ private:
 		// original sdds var access
 		Tdescr *origin() { return FvarOrigin; }
 		Tmeta meta() override { return Tmeta{Tint32::TYPE_ID, sdds::opt::saveval, FvarOrigin->name()}; }
+
+		/**
+		 * @brief suspend / resume averaging (only affects variables that are averaged, i.e. AVG_GLOBAL
+		 * or a custom interval): while suspended, value changes are ignored and the time while suspended
+		 * does not count towards the time-weighted average. The data collected up to the suspension is
+		 * kept (and published at the regular time, even if it's only a single value).
+		 */
+		void suspendAveraging(bool _suspend)
+		{
+			if (Fsuspended == _suspend)
+				return;
+			Fsuspended = _suspend;
+			if (!isAveraging() || particleSystem().startup != TparticleSystem::TstartupStatus::complete)
+				return;
+			_suspend ? onSuspend() : onResume();
+		}
+		bool averagingSuspended() { return Fsuspended; }
 
 		/**
 		 * @brief does this use the global publishing interval?
@@ -1601,6 +1624,7 @@ private:
 		bool FhasLatestValue = false;		// explicit flag, a tick of 0 is a legitimate FlatestTime
 		dtypes::TtickCount FstartTime = 0;	// start time of the averaged value
 		dtypes::TtickCount FlatestTime = 0; // last time a value was received
+		dtypes::TtickCount FsuspendTime = 0; // when averaging was suspended
 		dtypes::float64 FlatestValue = 0;	// last value that was received
 
 		/**
@@ -1638,11 +1662,36 @@ private:
 			return (FpreviousValue != originValue());
 		}
 
+		void onSuspend() override
+		{
+			// close out the current value (weighted until now), nothing is added while suspended
+			if (FhasLatestValue)
+			{
+				rs.add(FlatestValue, millis() - FlatestTime);
+				FhasLatestValue = false;
+			}
+			FsuspendTime = millis();
+		}
+
+		void onResume() override
+		{
+			// continue with the current value from now on (the suspended time carries no weight)
+			FlatestValue = static_cast<dtypes::float64>(this->originValue());
+			FlatestTime = millis();
+			FhasLatestValue = true;
+			this->markUpdated();
+			if (!FhasFirstValue)
+			{
+				FhasFirstValue = true;
+				FstartTime = this->FlastUpdateTime;
+			}
+		}
+
 		void clear() override
 		{
 			// already have one data point stored in the running stats
-			// --> start next stats with FlatestValue
-			bool carryOver = (rs.count() > 0);
+			// --> start next stats with FlatestValue (unless suspended, resuming starts the next stats)
+			bool carryOver = (rs.count() > 0) && !this->Fsuspended;
 			rs.reset(); // restart running stats
 			FlatestTime = 0;
 			FhasLatestValue = false;
@@ -1679,7 +1728,9 @@ private:
 				// millis() + FstartTime exceeds 2^32 (i.e. after ~24.9 days of uptime) and
 				// is also incorrect across the ~49.7 day millis() wrap around, both of which
 				// lead to a corrupted burst time base (tb)
-				return FstartTime + (static_cast<system_tick_t>(millis() - FstartTime) / 2);
+				// (while suspended, the interval ends when the averaging was suspended)
+				system_tick_t end = this->Fsuspended ? FsuspendTime : millis();
+				return FstartTime + (static_cast<system_tick_t>(end - FstartTime) / 2);
 			}
 		}
 
@@ -1694,7 +1745,9 @@ private:
 			else
 			{
 				// multi point -> add the value of the currently active data point before returning
-				addLatest();
+				// (not while suspended: the last value was already closed out when suspending)
+				if (!this->Fsuspended)
+					addLatest();
 				return TparticleSerializer::serializeData(rs.count(), rs.mean(), rs.stdDev(), this->FlinkedUnit);
 			}
 		}
@@ -1835,6 +1888,29 @@ private:
 	 * 1000+ 	-> publish every 1000+ ms
 	 * @return whether _var was found in any of the variable intervals' origin
 	 */
+	/**
+	 * @brief find the publishing wrapper of a variable
+	 */
+	TparticleVarWrapper *findVariableWrapper(TmenuHandle *_vars, Tdescr *_var)
+	{
+		for (auto it = _vars->iterator(); it.hasCurrent(); it.jumpToNext())
+		{
+			auto d = it.current();
+			if (!d)
+				continue;
+			if (d->type() == sdds::Ttype::STRUCT)
+			{
+				TmenuHandle *mh = static_cast<Tstruct *>(d)->value();
+				TparticleVarWrapper *found = mh ? findVariableWrapper(mh, _var) : nullptr;
+				if (found)
+					return found;
+			}
+			else if (static_cast<TparticleVarWrapper *>(d)->origin() == _var)
+				return static_cast<TparticleVarWrapper *>(d);
+		}
+		return nullptr;
+	}
+
 	bool setVariableInterval(TmenuHandle *_vars, dtypes::int32 _interval, Tdescr *_var)
 	{
 		if (_interval > publish::MAX && _interval < 1000)
@@ -2698,6 +2774,23 @@ public:
 	 */
 	TbleSpike &ble() { return Fble; }
 #endif
+
+	/**
+	 * @brief suspend / resume the averaging of a published variable (e.g. a stirrer speed while the
+	 * stirrer is paused for a read): while suspended, value changes are not collected and the
+	 * suspended time does not count towards the time-weighted average. Data collected before the
+	 * suspension is kept and published at the regular time. The live value of the variable is not
+	 * affected. Only applies to averaged variables (AVG_GLOBAL or custom intervals).
+	 * @return false if the variable is not part of the published tree
+	 */
+	bool suspendAveraging(Tdescr &_var, bool _suspend)
+	{
+		TparticleVarWrapper *w = findVariableWrapper(&sddsParticleVariables, &_var);
+		if (!w)
+			return false;
+		w->suspendAveraging(_suspend);
+		return true;
+	}
 
 #pragma endregion
 };

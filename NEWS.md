@@ -7,6 +7,14 @@ averaging interval were published like discrete values (`v` only, without `n`). 
 (still without `s`, since there is no standard deviation for a single point), so they can be told apart
 from discrete value changes in the database (`data_n`).
 
+## Feature: Suspend averaging during known disturbances
+
+`TparticleSpike::suspendAveraging(var, suspend)` excludes periods from the time-weighted average of a
+published variable to account for known disturbances that should not be included in averages: value
+changes are not collected while suspended and the suspended time carries no weight. Data collected before
+the suspension is kept and published at the regular time (also if it's just one or two values). The live
+value of the variable (tree, display, bluetooth/serial) is not affected.
+
 ## Offline data: burst splitting and memory limit
 
 - data collected for a long time before the time is valid (or bursts that grow beyond a cloud event)
