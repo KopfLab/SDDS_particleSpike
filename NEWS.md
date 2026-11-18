@@ -12,6 +12,26 @@ structure version bump):
   - `status` (`off`, `discoverable`, `connected`)
   - `connection`: the connected client (announced name and/or address)
 
+## SDDS browser (`assets/sddsBrowser.html`)
+
+New self-contained web page (no dependencies) to browse and control a device's SDDS tree from
+the browser, without the cloud:
+
+- connects via **Bluetooth** (Web Bluetooth: Chrome/Edge on desktop and Android, Bluefy on iOS) or
+  via **USB serial** (Web Serial: Chrome/Edge on desktop, for devices running the SDDS serial spike)
+- shows the tree with live values: expanding a struct subscribes to its values, collapsing it
+  unsubscribes (keeps bluetooth traffic low)
+- edit values in place; enums (including one-shot actions) are shown as buttons with the current
+  value highlighted, read-only values as text
+- units in variable names are shown as `[units]` (e.g. `setpoint_rpm` -> `setpoint [rpm]`,
+  `flow_mL_min` -> `flow [mL/min]`)
+- optional info column (type, saved, read-only) and a collapsible console with raw command input
+  (both hidden by default, choice remembered per browser; a red dot flags new errors while the
+  console is collapsed)
+- works on phone screens (stacked layout, larger touch targets)
+- launch locally with `rake sddsBrowser` (serves the page on `http://localhost:8000`, opens it in
+  Chrome and reloads it automatically whenever the file changes; `PORT=` / `NO_OPEN=1` options)
+
 # SDDS particleSpike 0.2.0
 
 This release is focused entirely on the **time base (`tb`)** that data bursts,
