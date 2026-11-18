@@ -25,16 +25,38 @@
            background: var(--panel); color: var(--fg); cursor: pointer; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
-  main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; padding: 16px; }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  [hidden] { display: none !important; }
+  /* single column unless the console is open on a wide screen (then side by side) */
+  main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 16px; align-items: start; }
+  @media (min-width: 801px) { body.console-open main { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
-               margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+               margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line);
+               display: flex; align-items: center; gap: 8px; min-height: 37px; }
+  section h2 .toggle { margin-left: auto; padding: 1px 8px; font-size: 12px; letter-spacing: 0; }
+  /* collapsible console (collapsed by default), red dot = new errors while collapsed */
+  #consoleToggle { cursor: pointer; user-select: none; }
+  #consoleToggle::before { content: "▸"; }
+  body.console-open #consoleToggle::before { content: "▾"; }
+  body:not(.console-open) #consoleToggle { border-bottom: 0; }
+  body:not(.console-open) #log, body:not(.console-open) #cmdform { display: none; }
+  #consoleToggle .dot { display: none; width: 8px; height: 8px; border-radius: 50%; background: var(--err); }
+  #consoleToggle.unread .dot { display: inline-block; }
   #tree { padding: 6px 0; min-height: 80px; }
   /* all rows span the full width with the same columns (nesting is indented inside the name cell)
      -> values line up regardless of depth or of how much is in the meta column */
-  .row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10em; gap: 8px;
+  .row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0 8px;
          align-items: center; padding: 3px 12px; }
+  /* info column (type, saved, ro): hidden by default, "show info" toggles it */
+  .meta { display: none; }
+  body.show-info .meta { display: block; }
+  body.show-info .row { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10em; }
+  /* wide screens: fixed name column so values don't drift far right */
+  @media (min-width: 601px) {
+    .row { grid-template-columns: minmax(0, 16em) minmax(0, 1fr); }
+    body.show-info .row { grid-template-columns: minmax(0, 16em) minmax(0, 1fr) 10em; }
+    .val input { max-width: 20em; }
+  }
   .row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .name { font-family: var(--mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .struct > .row .name { cursor: pointer; font-weight: 600; }
@@ -63,6 +85,26 @@
   #cmd { flex: 1; min-width: 0; font: 13px var(--mono); padding: 5px 8px; border: 1px solid var(--line);
          border-radius: 6px; background: var(--bg); color: var(--fg); }
   .hint { color: var(--muted); padding: 12px; }
+
+  /* narrow screens: info goes on a second line under the name instead of taking a column */
+  @media (max-width: 600px) {
+    /* name + info stacked at the top of the left cell, value centered over both */
+    body.show-info .row { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: auto 1fr; align-items: start; }
+    body.show-info .row .val { align-self: center; }
+    body.show-info .row .name { grid-column: 1; grid-row: 1; }
+    body.show-info .row .meta { grid-column: 1; grid-row: 2; text-align: left; }
+    body.show-info .row .val { grid-column: 2; grid-row: 1 / span 2; }
+    #log { height: 45vh; }
+    main { padding: 12px 8px; }
+  }
+  /* touch screens: bigger tap targets, 16px inputs (smaller fonts make iOS zoom in on focus) */
+  @media (max-width: 600px), (pointer: coarse) {
+    .row { padding: 5px 12px; }
+    .struct > .row { min-height: 44px; }
+    .val .btns { gap: 6px; }
+    .val .btns button { min-height: 36px; padding: 4px 12px; font-size: 14px; }
+    .val input, #cmd { font-size: 16px; }
+  }
 </style>
 </head>
 <body>
@@ -70,19 +112,19 @@
   <h1>SDDS Browser</h1>
   <button id="connectBle" class="primary">Connect Bluetooth</button>
   <button id="connectSerial" class="primary">Connect Serial</button>
-  <button id="disconnect" disabled>Disconnect</button>
-  <button id="reload" disabled>Reload tree</button>
+  <button id="disconnect" hidden>Disconnect</button>
+  <button id="reload" hidden>Reload tree</button>
   <span id="status">not connected</span>
   <span id="stats"></span>
 </header>
 <main>
   <section>
-    <h2>Tree</h2>
+    <h2>Tree <button id="infoToggle" class="toggle" title="show/hide the type, saved and read-only info">show info</button></h2>
     <div id="tree"><div class="hint" id="hint"><b>Connect Bluetooth</b> to a device advertising the Nordic UART Service (listed under its cloud device name), or <b>Connect Serial</b> to a device on USB running the SDDS serial spike (115200 baud).
 Expanding a struct subscribes to its values (<code>L</code>), collapsing unsubscribes (<code>U</code>).</div></div>
   </section>
   <section>
-    <h2>Console</h2>
+    <h2 id="consoleToggle" title="show/hide the console">Console <span class="dot" title="new errors"></span></h2>
     <div id="log"></div>
     <form id="cmdform"><input id="cmd" placeholder="raw command, e.g.  T   |   settings.slope=2   |   counter" autocomplete="off"><button>Send</button></form>
   </section>
@@ -113,6 +155,7 @@ function log(text, cls = "") {
   const el = $("log");
   const line = document.createElement("div");
   if (cls) line.className = cls;
+  if (cls === "err" && !document.body.classList.contains("console-open")) $("consoleToggle").classList.add("unread");
   line.textContent = text.length > 400 ? text.slice(0, 400) + ` …(${text.length} chars)` : text;
   el.appendChild(line);
   while (el.childNodes.length > 500) el.removeChild(el.firstChild);
@@ -125,10 +168,11 @@ function updateStats(extra) {
 /* ---------------- connection handling (shared by all transports) ---------------- */
 function setButtons() {
   const connected = !!transport;
-  $("connectBle").disabled = connected || !navigator.bluetooth;
-  $("connectSerial").disabled = connected || !navigator.serial;
-  $("disconnect").disabled = !connected;
-  $("reload").disabled = !connected;
+  // connect buttons only while not connected (disabled if the browser lacks the API), the others only while connected
+  $("connectBle").hidden = connected; $("connectBle").disabled = !navigator.bluetooth;
+  $("connectSerial").hidden = connected; $("connectSerial").disabled = !navigator.serial;
+  $("disconnect").hidden = !connected;
+  $("reload").hidden = !connected;
 }
 
 function onConnected(t) {
@@ -368,6 +412,7 @@ function renderNode(n) {
   const meta = document.createElement("div");
   meta.className = "meta";
   meta.textContent = n.type + (n.opt & OPT_SAVEVAL ? " · saved" : "") + (n.opt & OPT_READONLY ? " · ro" : "");
+  meta.style.paddingLeft = name.style.paddingLeft; // aligned with the name when shown underneath it (narrow screens)
   row.append(name, val, meta);
   el.appendChild(row);
   n.el = el; n.valEl = val;
@@ -441,6 +486,20 @@ function unsubscribe(node) {
   ports.delete(node.port); freePorts.push(node.port); node.port = 0;
   updateStats();
 }
+
+/* ---------------- view preferences (remembered per browser) ---------------- */
+// info column hidden and console collapsed by default
+const prefs = (() => { try { return JSON.parse(localStorage.getItem("sddsBrowser.prefs") || "{}"); } catch (e) { return {}; } })();
+function savePrefs() { try { localStorage.setItem("sddsBrowser.prefs", JSON.stringify(prefs)); } catch (e) {} }
+function applyPrefs() {
+  document.body.classList.toggle("show-info", !!prefs.info);
+  document.body.classList.toggle("console-open", !!prefs.console);
+  $("infoToggle").textContent = prefs.info ? "hide info" : "show info";
+  if (prefs.console) { $("consoleToggle").classList.remove("unread"); $("log").scrollTop = $("log").scrollHeight; }
+}
+$("infoToggle").onclick = () => { prefs.info = !prefs.info; savePrefs(); applyPrefs(); };
+$("consoleToggle").onclick = () => { prefs.console = !prefs.console; savePrefs(); applyPrefs(); };
+applyPrefs();
 
 /* ---------------- UI wiring ---------------- */
 $("connectBle").onclick = connectBluetooth;
