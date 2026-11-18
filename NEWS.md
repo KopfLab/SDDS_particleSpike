@@ -1,5 +1,12 @@
 # SDDS particleSpike 0.3.0
 
+## Fixed: averaged values with a single data point published without `n`
+
+Variables published as averages (running stats, `AVG_GLOBAL`) that received only one value during an
+averaging interval were published like discrete values (`v` only, without `n`). They now include `n: 1`
+(still without `s`, since there is no standard deviation for a single point), so they can be told apart
+from discrete value changes in the database (`data_n`).
+
 ## Offline data: burst splitting and memory limit
 
 - data collected for a long time before the time is valid (or bursts that grow beyond a cloud event)

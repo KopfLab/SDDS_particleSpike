@@ -1687,8 +1687,9 @@ private:
 		{
 			if (rs.count() == 0)
 			{
-				// single point (i.e. no stats yet) -> return latest value
-				return TparticleSerializer::serializeData(FlatestValue, this->FlinkedUnit);
+				// single point (i.e. no stats yet) -> return latest value, still with n = 1 (no sdev)
+				// so it is not mistaken for a discrete value change downstream
+				return TparticleSerializer::serializeData(1, FlatestValue, 0, this->FlinkedUnit);
 			}
 			else
 			{
