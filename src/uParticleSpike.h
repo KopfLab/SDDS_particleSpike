@@ -1840,8 +1840,23 @@ private:
 	dtypes::uint64 FcmdLogMinTime = 0; // earliest time in the log
 	char FcmdLog[particle::protocol::MAX_FUNCTION_ARG_LENGTH] = "[]\0";
 
-	void logCommand(dtypes::uint64 _time, const String &_cmd, int _errCode, const char *_errText)
+	/**
+	 * @brief mask secrets (any variable called "password") in commands before they are logged
+	 */
+	static String maskSecrets(const String &_cmd)
 	{
+		int eq = _cmd.indexOf('=');
+		if (eq < 0)
+			return _cmd;
+		String path = _cmd.substring(0, eq);
+		if (path == "password" || path.endsWith(".password"))
+			return path + "=***";
+		return _cmd;
+	}
+
+	void logCommand(dtypes::uint64 _time, const String &_cmdRaw, int _errCode, const char *_errText)
+	{
+		String _cmd = maskSecrets(_cmdRaw);
 		// append to sddslog cloud var Variant array
 		Variant cmd_log = TparticleSerializer::deserializeCommandLog(FcmdLog);
 		Variant new_cmd = TparticleSerializer::serializeCommand(_time - FcmdLogMinTime, _cmd, _errCode, _errText);
@@ -2189,6 +2204,9 @@ public:
 
 			// resetting or loading state?
 			(FresetState) ? particleSystem().saveState(true) : particleSystem().loadState();
+
+			// start the wifi/cloud connection now that the saved state (wifi on/off) is loaded
+			particleSystem().startConnection();
 
 #if Wiring_BLE
 			// start bluetooth now that the saved state (on/off and device name) is loaded

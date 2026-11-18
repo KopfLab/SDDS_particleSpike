@@ -35,7 +35,7 @@ private:
 public:
     // action comes first
     // not implementing size based bursts for now (action sendBurstData), see https://github.com/KopfLab/SDDS_particleSpike/issues/4
-    sdds_enum(___, restart, reconnect, disconnect, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, sendSddsState) Taction;
+    sdds_enum(___, restart, reset, saveState, syncTime, sendVitals, sendSdds, sendSddsValues, sendSddsState) Taction;
     sdds_var(Taction, action); // take a system action
 
     // structure type & version definitions
@@ -51,6 +51,52 @@ public:
 
     sdds_enum(connecting, connected, disconnected) TinternetStatus;
     sdds_var(TinternetStatus, internet, sdds::opt::readonly, TinternetStatus::connecting); // internet status
+
+#if Wiring_WiFi && Wiring_WiFi == 1
+    // wifi (only on platforms with wifi)
+    class Twifi : public TmenuHandle
+    {
+    public:
+        sdds_var(TonOff, state, sdds::opt::saveval, TonOff::ON); // wifi on/off (saveable, i.e. wifi can be turned off permanently)
+        sdds_enum(off, connecting, connected) Tstatus;
+        sdds_var(Tstatus, status, sdds::opt::readonly, Tstatus::off); // wifi status (connected = on the local network, see internet for the cloud)
+        sdds_var(Tstring, mac, sdds::opt::readonly);              // wifi MAC address (useful for whitelisting on wifi networks)
+        sdds_var(Tstring, network, sdds::opt::readonly);          // wifi network (SSID) currently connected to
+        sdds_var(Tuint8, signal_percent, sdds::opt::readonly, 0); // wifi signal strength
+
+        // saved networks and defining new ones: set ssid, password, security, hidden, then trigger the action
+        // (ssid and password are never saved and are cleared as soon as the action has run)
+        class Tsetup : public TmenuHandle
+        {
+        public:
+            sdds_var(Tstring, savedNetworks, sdds::opt::readonly); // all wifi networks (SSIDs) the device has credentials for, comma separated
+            sdds_var(Tstring, ssid);
+            sdds_var(Tstring, password);
+            sdds_enum(detect, WPA2, WPA3, WPA, WEP, open) Tsecurity;
+            sdds_var(Tsecurity, security, sdds::opt::nothing, Tsecurity::detect); // detect: scan and use the security the network advertises
+            sdds_enum(no, yes) Thidden;
+            sdds_var(Thidden, hidden, sdds::opt::nothing, Thidden::no); // hidden networks don't show up in scans, the device tries them blindly
+            sdds_enum(___, addNetwork, replaceNetworks) Taction;
+            sdds_var(Taction, action);                      // addNetwork: add to the saved networks, replaceNetworks: remove all saved networks and add this one instead
+            sdds_var(Tstring, result, sdds::opt::readonly); // result of the last action
+        };
+        sdds_var(Tsetup, setup);
+    };
+    sdds_var(Twifi, wifi);
+#endif
+
+#if Wiring_Cellular && Wiring_Cellular == 1
+    // cellular (only on platforms with cellular)
+    class Tcellular : public TmenuHandle
+    {
+    public:
+        sdds_var(TonOff, state, sdds::opt::saveval, TonOff::ON); // cellular on/off (saveable, i.e. cellular can be turned off permanently)
+        sdds_enum(off, connecting, connected) Tstatus;
+        sdds_var(Tstatus, status, sdds::opt::readonly, Tstatus::off); // cellular status (connected = on the cellular network, see internet for the cloud)
+        sdds_var(Tuint8, signal_percent, sdds::opt::readonly, 0);     // cellular signal strength
+    };
+    sdds_var(Tcellular, cellular);
+#endif
 
     // bluetooth (managed by the particle spike's TbleSpike, see uBleSpike.h)
     class Tbluetooth : public TmenuHandle
@@ -86,9 +132,6 @@ public:
         sdds_var(Tuint32, publishVitals_sec, sdds::opt::saveval, 60 * 60 * 6);               // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
         sdds_var(Tstring, time_dt, sdds::opt::readonly);                                     // system time
         sdds_var(TtimeSource, timeSource, sdds::opt::readonly, TtimeSource::none);          // where the system time came from (last sync)
-        sdds_var(Tstring, mac, sdds::opt::readonly);                                         // wifi network - can get this from device list
-        sdds_var(Tstring, network, sdds::opt::readonly);                                     // wifi network - can get this from device vitals
-        sdds_var(Tuint8, signal_percent, sdds::opt::readonly);                               // wifi signal strength - can get this from device vitals
         sdds_var(TrestartStatus, lastRestart, sdds::opt::readonly, TrestartStatus::powerUp); // restart information
 
 // random access memory (RAM, in bytes)
@@ -175,6 +218,17 @@ sdds_var(TdebugAction, debug)  // debug actions
     // delayed action timers
     Ttimer FdelayedActionTimer;
     Taction::e FdelayedAction = Taction::___;
+    bool FconnectionStarted = false; // has startConnection() been called (i.e. the saved state is loaded)?
+#if Wiring_WiFi && Wiring_WiFi == 1
+    Ttimer FwifiOffTimer;       // delays turning wifi off so the device can still report back
+    Ttimer FwifiReconnectTimer; // delays reconnecting to new wifi credentials so the device can still report back
+    Ttimer FwifiSetupTimer; // runs the wifi.setup.action after its value went out
+    bool FwifiReconnectRestart = false; // wifi was turned off for a replace, turn it back on
+    bool FwifiReconnectDisconnect = false; // drop the current wifi connection before reconnecting?
+#endif
+#if Wiring_Cellular && Wiring_Cellular == 1
+    Ttimer FcellularOffTimer; // delays turning cellular off so the device can still report back
+#endif
 
     // time sync timer
     const system_tick_t FtimeSyncInterval = 1000 * 60 * 60 * 6; // every 6 hours should suffice
@@ -226,6 +280,231 @@ public:
         return (now_ms - static_cast<dtypes::int64>(_elapsed_ms));
     }
 
+    /**
+     * @brief start the network/cloud connection - called by the particle spike once the saved
+     * state is loaded (so permanently turned off network interfaces stay off from the start)
+     * note: with several interfaces (e.g. M-SoM: wifi + cellular), Device OS' connection manager
+     * picks the best available interface for the cloud and moves the cloud session to another
+     * interface if the current one goes down (incl. when it is turned off here). An interface
+     * turned off with WiFi.off()/Cellular.off() is blocked, i.e. the cloud connection does not
+     * turn it back on.
+     */
+    void startConnection()
+    {
+        FconnectionStarted = true;
+#if Wiring_WiFi && Wiring_WiFi == 1
+        if (wifi.state == TonOff::OFF)
+            WiFi.off();
+#endif
+#if Wiring_Cellular && Wiring_Cellular == 1
+        if (cellular.state == TonOff::OFF)
+            Cellular.off();
+#endif
+        if (anyNetworkOn())
+            connectCloud();
+        else
+        {
+            Log.info("all network interfaces are off, not connecting to the cloud");
+            internet = TinternetStatus::disconnected;
+        }
+    }
+
+    /**
+     * @brief is any network interface (that can reach the cloud) turned on?
+     */
+    bool anyNetworkOn()
+    {
+        bool any = false;
+#if Wiring_WiFi && Wiring_WiFi == 1
+        any = any || wifi.state == TonOff::ON;
+#endif
+#if Wiring_Cellular && Wiring_Cellular == 1
+        any = any || cellular.state == TonOff::ON;
+#endif
+#if !(Wiring_WiFi && Wiring_WiFi == 1) && !(Wiring_Cellular && Wiring_Cellular == 1)
+        any = true; // e.g. ethernet only: always connect
+#endif
+        return any;
+    }
+
+    void connectCloud()
+    {
+        if (!Particle.connected())
+            internet = TinternetStatus::connecting;
+        Particle.connect(); // ties up the system thread
+    }
+
+    /**
+     * @brief called after an interface was turned off: if no other interface is left, also
+     * disconnect from the cloud (otherwise the connection manager moves the cloud session to
+     * the remaining interface on its own)
+     */
+    void disconnectCloudIfNoNetwork()
+    {
+        if (!anyNetworkOn())
+        {
+            Log.info("all network interfaces are off, disconnecting from the cloud");
+            internet = TinternetStatus::disconnected;
+            Particle.disconnect();
+        }
+    }
+
+#if Wiring_WiFi && Wiring_WiFi == 1
+    void wifiOn()
+    {
+        Log.info("turning wifi on");
+        (WiFi.on)(); // parentheses: "on" is an SDDS macro
+        WiFi.connect(WIFI_CONNECT_SKIP_LISTEN); // bring it up even if the cloud is already connected via another interface
+        connectCloud();
+    }
+
+    void wifiOff()
+    {
+        Log.info("turning wifi off");
+        disconnectCloudIfNoNetwork(); // disconnect first if this was the last interface
+        WiFi.off();
+    }
+
+    /**
+     * @brief add (or replace all saved networks with) the network defined by wifi.setup.ssid,
+     * wifi.setup.password, wifi.setup.security and wifi.setup.hidden
+     * @return result message (starts with "error" if it failed)
+     */
+    String defineNetwork(bool _replace)
+    {
+        String ssid = wifi.setup.ssid.c_str();
+        String password = wifi.setup.password.c_str();
+        auto sec = wifi.setup.security;
+        bool hidden = wifi.setup.hidden == Twifi::Tsetup::Thidden::yes;
+
+        // validate everything BEFORE touching the saved credentials (replace clears them)
+        if (ssid.length() == 0 || ssid.length() > 32)
+            return "error: ssid must be 1-32 characters";
+
+        WLanSecurityType type;
+        String detected;
+        if (sec == Twifi::Tsetup::Tsecurity::detect)
+        {
+            if (hidden)
+                return "error: hidden networks can't be found by a scan, set the security";
+            int found = scanSecurity(ssid);
+            if (found == -2)
+                return "error: scan failed (is wifi on?), set the security";
+            if (found < 0)
+                return String("error: network '") + ssid + "' not found by scan, set the security (and hidden=yes if it is hidden)";
+            type = (WLanSecurityType)found;
+            if (type == WLAN_SEC_WPA_ENTERPRISE || type == WLAN_SEC_WPA2_ENTERPRISE)
+                return "error: enterprise networks are not supported";
+            detected = String(" (") + securityName(type) + " detected)";
+        }
+        else
+        {
+            type = (sec == Twifi::Tsetup::Tsecurity::WPA3)   ? WLAN_SEC_WPA3
+                   : (sec == Twifi::Tsetup::Tsecurity::WPA)  ? WLAN_SEC_WPA
+                   : (sec == Twifi::Tsetup::Tsecurity::WEP)  ? WLAN_SEC_WEP
+                   : (sec == Twifi::Tsetup::Tsecurity::open) ? WLAN_SEC_UNSEC
+                                                             : WLAN_SEC_WPA2;
+        }
+
+        if (type == WLAN_SEC_UNSEC)
+            password = "";
+        else if (password.length() == 0)
+            return String("error: password required") + detected;
+        else if ((type == WLAN_SEC_WPA || type == WLAN_SEC_WPA2 || type == WLAN_SEC_WPA3) &&
+                 (password.length() < 8 || password.length() > 63))
+            return String("error: WPA passwords must be 8-63 characters") + detected;
+
+        if (_replace)
+        {
+            Log.info("replacing all saved wifi networks with '%s'", ssid.c_str());
+            WiFi.clearCredentials();
+        }
+        else
+            Log.info("adding wifi network '%s'", ssid.c_str());
+
+        WiFiCredentials cred(ssid.c_str(), (SecurityType)type);
+        if (password.length())
+            cred.setPassword(password.c_str());
+        cred.setHidden(hidden);
+        if (!WiFi.setCredentials(cred))
+            return String("error: failed to save network '") + ssid + "'";
+        ssid += detected + (hidden ? " (hidden)" : "");
+
+        updateSavedNetworks();
+
+        // reconnect if wifi is on: always after a replace (the current network may be gone),
+        // after an add only if not connected yet
+        if (wifi.state == TonOff::ON && (_replace || !WiFi.ready()))
+        {
+            FwifiReconnectDisconnect = _replace && (WiFi.ready() || WiFi.connecting());
+            FwifiReconnectTimer.start(1000); // delayed so the device can still report back
+            return String(_replace ? "replaced all networks with '" : "added '") + ssid + "', reconnecting";
+        }
+        return String(_replace ? "replaced all networks with '" : "added '") + ssid + "'";
+    }
+
+    /**
+     * @brief scan for the network and return its security (WLanSecurityType),
+     * -1 if not found, -2 if the scan failed (blocks for a few seconds)
+     */
+    int scanSecurity(const String &_ssid)
+    {
+        WiFiAccessPoint aps[20];
+        int n = WiFi.scan(aps, sizeof(aps) / sizeof(aps[0]));
+        if (n < 0)
+            return -2;
+        for (int i = 0; i < n; i++)
+            if (_ssid == aps[i].ssid)
+                return aps[i].security;
+        return -1;
+    }
+
+    static const char *securityName(WLanSecurityType _type)
+    {
+        switch (_type)
+        {
+        case WLAN_SEC_UNSEC: return "open";
+        case WLAN_SEC_WEP: return "WEP";
+        case WLAN_SEC_WPA: return "WPA";
+        case WLAN_SEC_WPA2: return "WPA2";
+        case WLAN_SEC_WPA3: return "WPA3";
+        default: return "enterprise";
+        }
+    }
+
+    void updateSavedNetworks()
+    {
+        WiFiAccessPoint ap[10]; // Device OS stores at most 10 wifi networks
+        int n = WiFi.getCredentials(ap, sizeof(ap) / sizeof(ap[0]));
+        String ssids;
+        for (int i = 0; i < n; i++)
+        {
+            if (i > 0)
+                ssids += ", ";
+            ssids += ap[i].ssid;
+        }
+        if (wifi.setup.savedNetworks != ssids.c_str())
+            wifi.setup.savedNetworks = ssids.c_str();
+    }
+#endif
+
+#if Wiring_Cellular && Wiring_Cellular == 1
+    void cellularOn()
+    {
+        Log.info("turning cellular on");
+        (Cellular.on)(); // parentheses: "on" is an SDDS macro
+        Cellular.connect();
+        connectCloud();
+    }
+
+    void cellularOff()
+    {
+        Log.info("turning cellular off");
+        disconnectCloudIfNoNetwork();
+        Cellular.off();
+    }
+#endif
+
     TparticleSystem()
     {
 
@@ -243,12 +522,13 @@ public:
             id = Particle.deviceID();
 
 // store mac ress
-#if Wiring_WiFi
+#if Wiring_WiFi && Wiring_WiFi == 1
             byte bytes[6];
             WiFi.macAddress(bytes);
             char buff[20];
             snprintf(buff, sizeof(buff), "%02x:%02x:%02x:%02x:%02x:%02x", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
-            vitals.mac = buff;
+            wifi.mac = buff;
+            updateSavedNetworks();
 #endif
 
             // calculate free flash memory
@@ -258,8 +538,8 @@ public:
             // subscribe to name handler
             Particle.subscribe("particle/device/name", &TparticleSystem::captureName, this);
 
-            // connect to the cloud (ties up the system thread)
-            Particle.connect();
+            // note: the cloud connection is started by startConnection() once the saved state
+            // is loaded (the wifi might be turned off permanently)
 
             // start system timers
             FsystemCheckTimer.start(FcheckInterval);
@@ -285,20 +565,6 @@ public:
                 // user requests a reset  (execute as delayed action to allow time for device to report back to cloud)
                 FdelayedAction = Taction::reset;
                 FdelayedActionTimer.start(1000);
-            }
-            else if (action == Taction::disconnect)
-            {
-                // user requests to disconnect (execute as delayed action to allow time for device to report back to cloud)
-                FdelayedAction = Taction::disconnect;
-                FdelayedActionTimer.start(1000);
-            }
-            else if (action == Taction::reconnect && internet == TinternetStatus::disconnected)
-            {
-                // user requests to reconnect
-                Log.trace("reconnecting to the cloud");
-                internet = TinternetStatus::connecting;
-                Particle.connect();
-                action = Taction::___;
             }
             else if (action == Taction::syncTime)
             {
@@ -326,16 +592,111 @@ public:
                 System.reset(static_cast<uint8_t>(TrestartStatus::userRestart));
             else if (FdelayedAction == Taction::reset)
                 System.reset(static_cast<uint8_t>(TrestartStatus::userReset));
-            else if (FdelayedAction == Taction::disconnect && internet != TinternetStatus::disconnected)
+        };
+
+#if Wiring_WiFi && Wiring_WiFi == 1
+        // wifi on/off (ignored until startConnection() is called after the state is loaded)
+        on(wifi.state)
+        {
+            if (!FconnectionStarted)
+                return;
+            if (wifi.state == TonOff::ON)
             {
-                Log.trace("disconnecting from the cloud");
-                internet = TinternetStatus::disconnected;
-                // note: this does NOT turn wifi/cellular modem off!
-                // if that's intended (e.g. for power safe), see the restrictions about cellular sim card locks
-                // at https://docs.particle.io/reference/device-os/api/cellular/off/
-                Particle.disconnect();
+                FwifiOffTimer.stop();
+                wifiOn();
+            }
+            else
+            {
+                // delayed to allow time for the device to report back (e.g. to the cloud)
+                FwifiOffTimer.start(1000);
             }
         };
+
+        on(FwifiOffTimer)
+        {
+            if (wifi.state == TonOff::OFF)
+                wifiOff();
+        };
+
+        // add / replace wifi networks
+        on(wifi.setup.action)
+        {
+            if (wifi.setup.action == Twifi::Tsetup::Taction::___)
+                return;
+            // run it from a timer so the action (and the "working" result) reach the clients first -
+            // the detect scan blocks for a few seconds
+            wifi.setup.result = wifi.setup.security == Twifi::Tsetup::Tsecurity::detect ? "scanning for the network..." : "saving...";
+            FwifiSetupTimer.start(100);
+        };
+
+        on(FwifiSetupTimer)
+        {
+            if (wifi.setup.action == Twifi::Tsetup::Taction::___)
+                return;
+            String result = defineNetwork(wifi.setup.action == Twifi::Tsetup::Taction::replaceNetworks);
+            if (result.startsWith("error"))
+                Log.warn("wifi: %s", result.c_str());
+            // never keep the credentials around
+            wifi.setup.ssid = "";
+            wifi.setup.password = "";
+            wifi.setup.result = result.c_str();
+            wifi.setup.action = Twifi::Tsetup::Taction::___;
+        };
+
+        // reconnect to newly defined networks
+        on(FwifiReconnectTimer)
+        {
+            if (wifi.state != TonOff::ON || !FconnectionStarted)
+                return;
+            if (WiFi.listening())
+                WiFi.listen(false);
+            // replace while connected: turn wifi off and back on so it searches for the new network
+            if (FwifiReconnectDisconnect)
+            {
+                Log.info("turning wifi off and on again to connect to the new network");
+                FwifiReconnectDisconnect = false;
+                FwifiReconnectRestart = true;
+                wifiOff();
+                FwifiReconnectTimer.start(2000);
+                return;
+            }
+            if (FwifiReconnectRestart)
+            {
+                FwifiReconnectRestart = false;
+                wifiOn(); // also reconnects the cloud
+                return;
+            }
+            // add while not connected: just connect
+            Log.info("connecting wifi to use the new credentials");
+            WiFi.connect(WIFI_CONNECT_SKIP_LISTEN);
+            connectCloud();
+        };
+#endif
+
+#if Wiring_Cellular && Wiring_Cellular == 1
+        // cellular on/off (ignored until startConnection() is called after the state is loaded)
+        on(cellular.state)
+        {
+            if (!FconnectionStarted)
+                return;
+            if (cellular.state == TonOff::ON)
+            {
+                FcellularOffTimer.stop();
+                cellularOn();
+            }
+            else
+            {
+                // delayed to allow time for the device to report back (e.g. to the cloud)
+                FcellularOffTimer.start(1000);
+            }
+        };
+
+        on(FcellularOffTimer)
+        {
+            if (cellular.state == TonOff::OFF)
+                cellularOff();
+        };
+#endif
 
         // vitals publishing interval
         on(vitals.publishVitals_sec)
@@ -374,25 +735,47 @@ public:
 
 // check on wifi/cellular info
 #if Wiring_WiFi && Wiring_WiFi == 1
-            if (WiFi.ready() && Particle.connectionInterface() == WiFi)
+            // independent of the cloud connection (also works on local wifi without internet)
             {
-                WiFiSignal rssi = WiFi.RSSI();
-                dtypes::uint8 sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
-                if (vitals.signal_percent != sig)
-                    vitals.signal_percent = sig;
-                if (vitals.network != WiFi.SSID())
-                    vitals.network = WiFi.SSID();
+                Twifi::Tstatus::e status = (wifi.state == TonOff::OFF || !FconnectionStarted) ? Twifi::Tstatus::off
+                                           : WiFi.ready()                                     ? Twifi::Tstatus::connected
+                                                                                              : Twifi::Tstatus::connecting;
+                if (wifi.status != status)
+                {
+                    wifi.status = status;
+                    if (status == Twifi::Tstatus::connected)
+                        updateSavedNetworks(); // credentials may have changed (e.g. via listening mode)
+                }
+                dtypes::uint8 sig = 0;
+                const char *ssid = "";
+                if (WiFi.ready())
+                {
+                    WiFiSignal rssi = WiFi.RSSI();
+                    sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
+                    ssid = WiFi.SSID();
+                }
+                if (wifi.signal_percent != sig)
+                    wifi.signal_percent = sig;
+                if (wifi.network != ssid)
+                    wifi.network = ssid;
             }
 #endif
 
 #if Wiring_Cellular && Wiring_Cellular == 1
-            if (Cellular.ready() && Particle.connectionInterface() == Cellular)
             {
-                CellularSignal rssi = Cellular.RSSI();
-                dtypes::uint8 sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
-                if (vitals.signal_percent != sig)
-                    vitals.signal_percent = sig;
-                // FIXME: what's the cellular network equivalent to SSID?
+                Tcellular::Tstatus::e status = (cellular.state == TonOff::OFF || !FconnectionStarted) ? Tcellular::Tstatus::off
+                                               : Cellular.ready()                                         ? Tcellular::Tstatus::connected
+                                                                                                          : Tcellular::Tstatus::connecting;
+                if (cellular.status != status)
+                    cellular.status = status;
+                dtypes::uint8 sig = 0;
+                if (Cellular.ready())
+                {
+                    CellularSignal rssi = Cellular.RSSI();
+                    sig = static_cast<dtypes::uint8>(round(rssi.getStrength()));
+                }
+                if (cellular.signal_percent != sig)
+                    cellular.signal_percent = sig;
             }
 #endif
 
