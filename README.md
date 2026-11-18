@@ -92,6 +92,8 @@ The `SYSTEM` structure provides access to the following SDDS variables:
   - **`bursts`** — outgoing data-burst diagnostics
     - **`timer_ms`** — _saveable_ — the minimum delay between data bursts (default: 3000ms  = 3s).
     - **`queued`** / **`sending`** / **`sent`** / **`failed`** / **`invalid`** / **`discarded`** — _read-only_ — counters for the burst send queue
+
+  Data recorded while the device is offline is kept in RAM: until the time is valid (cloud sync or bluetooth `@time`) it collects in the current burst, afterwards finished bursts wait in the send queue until the device is connected. Bursts larger than a cloud event (16 kB) are split by time into several bursts. If free memory drops below a reserve (256 kB on P2/M-SoM, 48 kB on Argon/Boron; override with `#define SDDS_PARTICLE_RESERVE_RAM <bytes>` before including the library) the oldest queued bursts are discarded first (counted in `discarded`), then the oldest data of the current burst.
   - **`globalInterval_ms`** — _saveable_ — the global publish interval used by variables set to "average over the global interval" (default: 20 minutes).
   - **`nextGlobalPublish`** — _read-only_ — the time of the next global publish if `record` is on
   - **`varIntervals_ms`** — a mirror of the device's variable tree in which each entry sets how often that individual variable is published: `-1` = average over the global interval (while recording), `0` = never, `1` = on every change (while recording), `2` = on every change (always), or a positive number = a fixed interval in milliseconds. The [sddsParticle](https://github.com/KopfLab/sddsParticle) GUI makes this setting accessible more intuitively with dropdown option for each variable in the structure tree.

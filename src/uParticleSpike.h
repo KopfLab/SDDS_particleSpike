@@ -27,6 +27,25 @@ private:
 	// namespace
 	using TonOff = sdds::enums::OnOff;
 
+	// free RAM to keep in reserve: when free memory drops below this, the oldest queued bursts
+	// (or, if none are queued yet, the oldest data of the current burst) are discarded
+	// (override by defining SDDS_PARTICLE_RESERVE_RAM before including this header)
+#ifdef SDDS_PARTICLE_RESERVE_RAM
+	static constexpr uint32_t RESERVE_RAM = SDDS_PARTICLE_RESERVE_RAM;
+#elif (PLATFORM_ID == PLATFORM_P2 || PLATFORM_ID == PLATFORM_MSOM)
+	static constexpr uint32_t RESERVE_RAM = 256 * 1024; // of ~3 MB
+#else
+	static constexpr uint32_t RESERVE_RAM = 48 * 1024; // of ~80 KB (Argon, Boron)
+#endif
+
+	// max size of a single burst (= max cloud event size, 16 kB of CBOR)
+	// https://docs.particle.io/reference/device-os/typed-publish/
+	static constexpr size_t MAX_BURST_CBOR = 16 * particle::protocol::MAX_EVENT_DATA_LENGTH;
+
+	// bursts with at most this many data points are serialized to check their size,
+	// larger ones are split by time first (serializing a huge burst at once would need a lot of RAM)
+	static constexpr size_t MAX_BURST_POINTS_TO_SERIALIZE = 512;
+
 /*** particle serializer (to Variants)  ***/
 #pragma region serializer
 
@@ -50,6 +69,7 @@ private:
 		{
 			Fdataset.push_back(_first);
 		}
+		explicit TvarBurstDataset(Tdescr *_ptr) : FdescrPtr(_ptr) {}
 	};
 
 	/**
@@ -887,6 +907,7 @@ private:
 		VariantArray FqueuedBursts;						 // stack of data ready for publishing
 		const system_tick_t FpublishcheckInterval = 200; // publish status check timer [ms]
 		Ttimer FpublishCheckTimer;						 // publish check timer
+		system_tick_t FlastMemoryCheck = 0;				 // last free memory check when adding burst data
 
 		void printVariant(const Variant &data)
 		{
@@ -926,10 +947,11 @@ private:
 			// data bursts
 			on(FburstTimer)
 			{
-				Variant burst = TparticleSerializer::serializeBurst(FminTime, FburstData);
 				if (readyToPublish())
 				{
-					queueData(burst);
+					// split into bursts that fit into a cloud event if necessary
+					// (e.g. data collected for a long time while the time was not valid yet)
+					queueBurst(std::move(FburstData));
 					clearBurst();
 				}
 				else
@@ -938,9 +960,12 @@ private:
 					// --> keep the burst going = restart the timer
 					if (FnewBurstData)
 					{
-						// evrerytime there's new data, show it
-						Log.trace("*** CONTINUING BURST, SO FAR: ***");
-						printVariant(burst);
+						// evrerytime there's new data, show it (only serialized if tracing, the burst can get large)
+						if (Log.isTraceEnabled())
+						{
+							Log.trace("*** CONTINUING BURST, SO FAR: ***");
+							printVariant(TparticleSerializer::serializeBurst(FminTime, FburstData));
+						}
 						FnewBurstData = false;
 					}
 					FburstTimer.start(particleSystem().publishing.bursts.timer_ms);
@@ -1045,6 +1070,13 @@ private:
 			if (!_always && particleSystem().publishing.record != TonOff::ON)
 				return;
 
+			// make room if RAM is running low (checked at most every 250 ms, System.freeMemory() walks the heap)
+			if (millis() - FlastMemoryCheck >= 250)
+			{
+				FlastMemoryCheck = millis();
+				ensureFreeMemory();
+			}
+
 			// keep track of min time
 			// note: FburstData being empty (rather than FminTime being 0) is the "no reference
 			// time yet" flag so that a legitimate tick of 0 does not permanently pin the burst
@@ -1081,6 +1113,127 @@ private:
 		}
 
 		/**
+		 * @brief discard the oldest queued bursts (or, if nothing is queued, the oldest data
+		 * points of the current burst) until at least RESERVE_RAM of free memory is left
+		 */
+		void ensureFreeMemory()
+		{
+			if (System.freeMemory() >= RESERVE_RAM)
+				return;
+			uint32_t bursts = 0, points = 0;
+			while (System.freeMemory() < RESERVE_RAM)
+			{
+				if (!FqueuedBursts.isEmpty())
+				{
+					FqueuedBursts.removeAt(0);
+					particleSystem().publishing.bursts.queued--;
+					particleSystem().publishing.bursts.discarded++;
+					bursts++;
+				}
+				else if (dropOldestBurstPoint())
+					points++;
+				else
+					break; // nothing left to free
+			}
+			if (bursts > 0)
+				Log.warn("low memory (%lu bytes free): discarded the %lu oldest queued burst(s)", System.freeMemory(), bursts);
+			if (points > 0)
+				Log.warn("low memory (%lu bytes free): discarded the %lu oldest data point(s) of the current burst", System.freeMemory(), points);
+		}
+
+		/**
+		 * @brief remove the oldest data point of the current burst
+		 * @return false if there is nothing to remove
+		 */
+		bool dropOldestBurstPoint()
+		{
+			int oldest = -1;
+			for (size_t i = 0; i < FburstData.size(); ++i)
+			{
+				if (FburstData[i].Fdataset.empty())
+					continue;
+				if (oldest < 0 || static_cast<dtypes::TtickCount_signed>(FburstData[i].Fdataset[0].Ftime - FburstData[oldest].Fdataset[0].Ftime) < 0)
+					oldest = i;
+			}
+			if (oldest < 0)
+				return false;
+			auto &set = FburstData[oldest].Fdataset;
+			set.erase(set.begin());
+			if (set.empty())
+				FburstData.erase(FburstData.begin() + oldest);
+			return true;
+		}
+
+		/**
+		 * @brief earliest time stamp and number of data points of burst data
+		 */
+		static size_t burstPoints(const std::vector<TvarBurstDataset> &_data, system_tick_t *_minTime = nullptr)
+		{
+			size_t n = 0;
+			for (const auto &set : _data)
+			{
+				for (const auto &point : set.Fdataset)
+				{
+					if (_minTime && (n == 0 || static_cast<dtypes::TtickCount_signed>(point.Ftime - *_minTime) < 0))
+						*_minTime = point.Ftime;
+					n++;
+				}
+			}
+			return n;
+		}
+
+		/**
+		 * @brief queue burst data for publication, split into several bursts (by time)
+		 * if it does not fit into a single cloud event
+		 */
+		void queueBurst(std::vector<TvarBurstDataset> _data)
+		{
+			system_tick_t minTime = 0;
+			size_t n = burstPoints(_data, &minTime);
+			if (n == 0)
+				return;
+
+			// small enough to try in one piece?
+			if (n <= MAX_BURST_POINTS_TO_SERIALIZE)
+			{
+				Variant burst = TparticleSerializer::serializeBurst(minTime, _data);
+				// a single data point that is too large is discarded by queueData
+				if (n == 1 || getCBORSize(burst) <= MAX_BURST_CBOR)
+				{
+					queueData(burst);
+					return;
+				}
+			}
+
+			// split in two: by time (earlier/later half of the time range), data points are moved not copied
+			uint32_t maxOffset = 0;
+			for (const auto &set : _data)
+				for (const auto &point : set.Fdataset)
+					maxOffset = std::max<uint32_t>(maxOffset, point.Ftime - minTime);
+			std::vector<TvarBurstDataset> early, late;
+			for (size_t i = 0; i < _data.size(); ++i)
+			{
+				TvarBurstDataset e(_data[i].FdescrPtr), l(_data[i].FdescrPtr);
+				auto &points = _data[i].Fdataset;
+				for (size_t j = 0; j < points.size(); ++j)
+				{
+					// all at the same time (maxOffset 0): split by position instead
+					bool isEarly = (maxOffset > 0) ? (points[j].Ftime - minTime <= maxOffset / 2)
+												   : ((_data.size() > 1) ? (i < _data.size() / 2) : (j < points.size() / 2));
+					(isEarly ? e : l).Fdataset.push_back(std::move(points[j]));
+				}
+				if (!e.Fdataset.empty())
+					early.push_back(std::move(e));
+				if (!l.Fdataset.empty())
+					late.push_back(std::move(l));
+			}
+			_data.clear();
+			_data.shrink_to_fit();
+			queueBurst(std::move(early));
+			queueBurst(std::move(late));
+		}
+
+		/**
 		 * @brief queues Variant for publication, typically data is added through
 		 * addToBurst but this function can be used to queue any data directly
 		 * for publication
@@ -1090,7 +1243,7 @@ private:
 		{
 			// safety check if data is small enough (less than 16kB)
 			// https://docs.particle.io/reference/device-os/typed-publish/
-			if (getCBORSize(_data) > 16 * particle::protocol::MAX_EVENT_DATA_LENGTH)
+			if (getCBORSize(_data) > MAX_BURST_CBOR)
 			{
 				// burst too large!
 				Log.error("cannot queue data because it exceeds the 16kB cloud event limit");
@@ -1105,6 +1258,7 @@ private:
 			FqueuedBursts.append(_data);
 			printVariant(_data);
 			particleSystem().publishing.bursts.queued++;
+			ensureFreeMemory();
 			if (!FpublishCheckTimer.running())
 				FpublishCheckTimer.start(0);
 			return true;

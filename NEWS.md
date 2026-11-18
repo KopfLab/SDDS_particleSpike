@@ -1,5 +1,15 @@
 # SDDS particleSpike 0.3.0
 
+## Offline data: burst splitting and memory limit
+
+- data collected for a long time before the time is valid (or bursts that grow beyond a cloud event)
+  are now split by time into bursts that fit into a cloud event (16 kB) instead of being discarded whole
+- the burst queue is limited by free RAM: below a reserve (256 kB on P2/M-SoM, 48 kB on Argon/Boron,
+  `SDDS_PARTICLE_RESERVE_RAM` to override) the oldest queued bursts are discarded (counted in
+  `publishing.bursts.discarded`), then the oldest data of the current burst, instead of running out of memory
+- the open burst is no longer serialized every burst timer cycle while waiting for a valid time
+  (only when trace logging is on)
+
 ## Bluetooth access to the SDDS tree
 
 On platforms with Bluetooth LE, `TparticleSpike` now also exposes the SDDS tree via bluetooth
