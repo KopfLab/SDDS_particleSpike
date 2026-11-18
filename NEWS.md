@@ -14,6 +14,19 @@ structure version bump):
 - bluetooth clients can set the device time if it is not yet valid (`@time <unix ms>`, sent automatically
   by the SDDS browser on connect), so devices without a Particle cloud connection (local wifi only)
   get the correct time from the first bluetooth connection after power up
+- `wifi` submenu (after `internet`, before `bluetooth`, only on platforms with wifi) with
+  - `state` (`ON`/`OFF`, saveable) to turn wifi (and the cloud connection) on/off, permanently if the state is saved
+  - `status` (`off`, `connecting`, `connected`)
+  - `mac`, `network` and `signal_percent` (moved here from `vitals`), now updated whenever wifi is up, also
+    without a cloud connection (local wifi only)
+  - `setup` submenu with `savedNetworks` (all wifi networks the device has credentials for) and `ssid`,
+    `password`, `security` (`detect` scans for the network's security), `hidden` and `action` (`addNetwork`, `replaceNetworks`) plus `result` to define wifi
+    networks from the SDDS tree (e.g. via bluetooth); the device reconnects to the new network if needed.
+    Passwords are never saved, cleared right after use and masked in the cloud command log.
+- `cellular` submenu (only on platforms with cellular) with `state`, `status` and `signal_percent` (moved from `vitals`)
+- on devices with wifi and cellular (M-SoM), turning one off moves the cloud connection to the other;
+  the cloud is only disconnected when all interfaces are off
+- removed the `disconnect` and `reconnect` actions from `SYSTEM.action` (use `wifi.state` instead)
 - `vitals.timeSource` (`none`, `cloud`, `bluetooth`, `ntp`): where the system time came from
   (`ntp` is reserved for a local time server, not implemented yet)
 
@@ -34,6 +47,10 @@ the browser, without the cloud:
   (both hidden by default, choice remembered per browser; a red dot flags new errors while the
   console is collapsed)
 - works on phone screens (stacked layout, larger touch targets)
+- on disconnect the tree is grayed out; reconnecting to the same device restores the open submenus
+  (also on reload)
+- flash application firmware (`.bin`) over USB from the browser (desktop Chrome/Edge): reads the module
+  header (platform, address, required Device OS), puts the device into DFU mode and writes the firmware
 - launch locally with `rake sddsBrowser` (serves the page on `http://localhost:8000`, opens it in
   Chrome and reloads it automatically whenever the file changes; `PORT=` / `NO_OPEN=1` options)
 

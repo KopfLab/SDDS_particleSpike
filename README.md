@@ -44,14 +44,30 @@ The `SYSTEM` structure provides access to the following SDDS variables:
   - `sendSdds`: send the device's complete structure tree to the cloud
   - `sendSddsValues`: send all of the device's SDDS variables current values to the cloud
   - `sendSddsState`: send all of the device's _saveable_ SDDS variables and their values to the cloud
-  - `disconnect`: disconnect from the cloud (note that without cloud connection, you cannot issue commands to this device via the web anymore)
-  - `reconnect`: reconnect to the cloud
 - **`type`** — _read-only_ — the device type (structure identifier)
 - **`version`** — _read-only_ — the structure version (the [sddsParticle](https://github.com/KopfLab/sddsParticle) GUI uses it to check that a device's values and structure tree are compatible)
 - **`id`** — _read-only_ — the Particle unique device ID
 - **`name`** — _read-only, saveable_ — the cloud-assigned device name
 - **`startup`** — _read-only_ — startup progress (`___` → `complete`).
 - **`internet`** — _read-only_ — cloud connection status (`connecting`, `connected`, `disconnected`).
+- **`wifi`** — wifi settings and connection info, _only on platforms with wifi_ (e.g. Photon 2, M-SoM). Updated regardless of the cloud connection, i.e. also on a local wifi network without internet.
+  - **`state`** — _saveable_ — turn wifi `ON` (default) or `OFF`. `OFF` turns wifi off entirely (after a 1 second delay so the device can still report back); `ON` turns it back on and (re)connects to the cloud. Save the state to keep wifi off across restarts (e.g. for devices only used via bluetooth). If no other network interface is on, turning wifi off also disconnects from the cloud - note that without a cloud connection, you cannot issue commands to the device via the web anymore.
+  - **`status`** — _read-only_ — `off`, `connecting` or `connected` (connected to the wifi network; see `internet` for the cloud connection)
+  - **`mac`** — _read-only_ — the device's WiFi MAC address (useful for whitelisting on WiFi networks)
+  - **`network`** — _read-only_ — the WiFi network (SSID) the device is currently connected to (empty if not connected)
+  - **`signal_percent`** — _read-only_ — the WiFi signal strength (`0` if not connected)
+  - **`setup`** — saved networks and defining new ones (set `ssid`, `password`, `security` and `hidden`, then trigger the `action`)
+    - **`savedNetworks`** — _read-only_ — all WiFi networks (SSIDs) the device has credentials for, comma separated (Device OS stores up to 10)
+    - **`ssid`**, **`password`**, **`security`** — define a WiFi network to add: the network name, its password and its security type (`detect` (default), `WPA2`, `WPA3`, `WPA`, `WEP` or `open`). With `detect` the device scans for the network (a few seconds) and uses the security it advertises; this needs wifi to be on and the network in range. `ssid` and `password` are never saved and are cleared as soon as the `action` has run; passwords are masked (`password=***`) in the cloud command log and in the SDDS browser.
+    - **`action`** — `addNetwork`: add the defined network to the saved networks (if wifi is on but not connected, the device tries to connect right away), `replaceNetworks`: remove all saved networks and save only the defined one instead (if wifi is on, the device reconnects using the new network, also if it was connected to one of the removed networks). Both validate the input first (e.g. WPA passwords must be 8-63 characters) so a failed `replaceNetworks` never leaves the device without saved networks. Reconnects happen after a 1 second delay so the device can still report back. Note: commands sent via the cloud are split at spaces, so an ssid or password with spaces can only be set via bluetooth or serial.
+    - **`hidden`** — `no` (default) or `yes`: hidden networks don't show up in scans, so the device only joins them if they are marked hidden (it then tries them after all visible saved networks). Hidden networks need an explicit `security`. The WiFi cipher is not needed, Device OS determines it automatically.
+    - **`result`** — _read-only_ — the result of the last `action`, e.g. `added 'labnet', reconnecting` or `added 'labnet' (WPA2 detected), reconnecting` or `error: network 'labnet' not found by scan, set the security (and hidden=yes if it is hidden)`
+- **`cellular`** — cellular settings and connection info, _only on platforms with cellular_ (e.g. Boron, M-SoM)
+  - **`state`** — _saveable_ — turn cellular `ON` (default) or `OFF`, works like `wifi.state`. Note: avoid toggling cellular frequently, carriers may block devices that reconnect too aggressively.
+  - **`status`** — _read-only_ — `off`, `connecting` or `connected` (connected to the cellular network)
+  - **`signal_percent`** — _read-only_ — the cellular signal strength (`0` if not connected)
+
+  On devices with both wifi and cellular (M-SoM), Device OS picks the best available interface for the cloud connection and automatically moves the cloud connection to the other interface if the current one goes down or is turned off here. The cloud is only disconnected when both are off.
 - **`bluetooth`** — bluetooth settings and status (see [Bluetooth](#bluetooth))
   - **`state`** — _saveable_ — turn bluetooth `ON` (default) or `OFF`. `OFF` disconnects any client and turns bluetooth off entirely (the device is no longer discoverable); save the state to keep it off across restarts.
   - **`status`** — _read-only_ — `off`, `discoverable` (on, waiting for a connection) or `connected`
@@ -66,9 +82,6 @@ The `SYSTEM` structure provides access to the following SDDS variables:
   - **`publishVitals_sec`** — _saveable_ — how often to automatically publish Particle vitals, in seconds; `0` disables it (default: 6 hours).
   - **`time_dt`** — _read-only_ — the device's system time, synched from the particle cloud (kept in UTC)
   - **`timeSource`** — _read-only_ — where the system time came from: `none` (no valid time yet, the default after a power up), `cloud` (Particle cloud time sync), `bluetooth` (set by a bluetooth client via `@time` because the device had no valid time), `ntp` (reserved for a local time server, e.g. on the same host as an MQTT broker)
-  - **`mac`** — _read-only_ — the device's WiFi MAC address (useful for whitelisting on WiFi networks)
-  - **`network`** — _read-only_ — the WiFi network (SSID) the device is currently connected to
-  - **`signal_percent`** — _read-only_ — the WiFi/cellular signal strength
   - **`lastRestart`** — _read-only_ — the cause of the last device restart (`powerUp`, `userRestart`, `userReset`, `watchdogTimeout`, `outOfMemory`, `PANIC`).
   - **`totalRAM_byte`** / **`freeRAM_byte`** — _read-only_ — total/current RAM usage
   - **`totalFlash_byte`** / **`freeFlash_byte`** — _read-only_ — total/current flash-storage usage
@@ -127,6 +140,14 @@ On platforms with Bluetooth LE (e.g. Photon 2 / P2, Argon, Boron), the particle 
 *Connect Serial* works the same way as *Connect Bluetooth* but needs no bluetooth (and no cloud connection). The serial port can only be open in one place at a time, so stop any serial monitor (`rake monitor`) first. Any other output on the serial port (e.g. from a `SerialLogHandler`) shows up in the page's console; if log messages get printed in the middle of a long response (e.g. the type tree), that response can't be parsed - use *Reload tree*.
 
 Web Bluetooth and Web Serial only work in a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) (`https://` or `http://localhost`) Web Bluetooth is supported by Chrome/Edge on macOS, Windows, Linux, ChromeOS and Android, but not by Safari/iOS - on iPhones, use the Bluefy browser app (App Store) instead. Web Serial is supported by Chrome/Edge on desktop computers only.
+
+**Flashing firmware**: *Flash firmware* (desktop Chrome/Edge only, needs Web Serial and [WebUSB](https://developer.mozilla.org/en-US/docs/Web/API/WebUSB_API)) flashes an application `.bin` over USB, without the Particle CLI:
+
+1. pick the `.bin` - the page reads its module header and shows the target platform, flash address and the Device OS (system module) version it requires; anything that is not an application firmware (e.g. Device OS system parts or a bootloader) is refused
+2. *Flash* puts the device into DFU mode (blinking yellow) by opening its USB serial port at 14400 baud - you select the serial port, unless the page is already connected via serial or the port was selected before
+3. *Select device in DFU mode* - the device shows up as a different USB device in DFU mode, so it has to be selected again (only the first time, the browser remembers it afterwards); the page checks that the device's platform matches the firmware, then erases the needed flash sectors, writes the firmware and restarts the device
+
+Close any serial monitor first. If the device runs an older Device OS than the firmware requires, it restarts in safe mode (breathing magenta) until Device OS is updated (e.g. with `particle update`). Remember that `0.x` level firmware changes may change the SDDS structure and require a state reset. On Linux, WebUSB may need Particle's udev rules. The DFU implementation follows the one in Particle's [particle-usb](https://github.com/particle-iot/particle-usb) library.
 
 ## How to compile on GitHub
 
