@@ -1,3 +1,17 @@
+# SDDS particleSpike 0.3.0
+
+## Bluetooth access to the SDDS tree
+
+On platforms with Bluetooth LE, `TparticleSpike` now also exposes the SDDS tree via bluetooth
+(Nordic UART Service, same line-based protocol as the serial spike), see the new *Bluetooth* section
+in the README. New in the `SYSTEM` structure (this changes the structure tree, devices need a
+structure version bump):
+
+- `bluetooth` submenu (after `internet`) with
+  - `state` (`ON`/`OFF`, saveable) to turn bluetooth on/off, permanently if the state is saved
+  - `status` (`off`, `discoverable`, `connected`)
+  - `connection`: the connected client (announced name and/or address)
+
 # SDDS particleSpike 0.2.0
 
 This release is focused entirely on the **time base (`tb`)** that data bursts,
