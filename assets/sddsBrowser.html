@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDDS Browser</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e3de;
+    --accent: #2f6fdb; --ok: #1f8a4c; --err: #c23b32; --ro: #8a8a84; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #1f1f1d; --fg: #e9e9e4; --muted: #9a9a93; --line: #33332f;
+            --accent: #6b9cf0; --ok: #4cc27f; --err: #f0776e; --ro: #85857e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px;
+           border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0; }
+  #status { color: var(--muted); }
+  #status.on { color: var(--ok); }
+  #stats { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-left: auto; }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; padding: 16px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+               margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  #tree { padding: 6px 0; min-height: 80px; }
+  /* all rows span the full width with the same columns (nesting is indented inside the name cell)
+     -> values line up regardless of depth or of how much is in the meta column */
+  .row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10em; gap: 8px;
+         align-items: center; padding: 3px 12px; }
+  .row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .name { font-family: var(--mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .struct > .row .name { cursor: pointer; font-weight: 600; }
+  .struct > .row .name::before { content: "▸ "; color: var(--muted); }
+  .struct.open > .row .name::before { content: "▾ "; }
+  .children { display: none; }
+  .struct.open > .children { display: block; }
+  .val { font-family: var(--mono); font-size: 13px; min-width: 0; }
+  .val.ro { color: var(--ro); }
+  .val input, .val select { font: inherit; width: 100%; padding: 2px 6px; border: 1px solid var(--line);
+                            border-radius: 4px; background: var(--bg); color: var(--fg); }
+  .val .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  .val .btns button { padding: 1px 8px; font-size: 12px; }
+  /* current enum value: highlighted, not clickable */
+  .val .btns button.sel { background: var(--accent); border-color: var(--accent); color: #fff; opacity: 1; cursor: default; }
+  .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; text-align: right; }
+  .flash { animation: flash .6s; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--ok) 25%, transparent); } }
+  #log { font-family: var(--mono); font-size: 12px; height: 420px; overflow: auto; padding: 8px 12px;
+         white-space: pre-wrap; word-break: break-all; }
+  #log .out { color: var(--accent); }
+  #log .err { color: var(--err); }
+  #log .sys { color: var(--muted); }
+  #cmdform { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); }
+  #cmd { flex: 1; min-width: 0; font: 13px var(--mono); padding: 5px 8px; border: 1px solid var(--line);
+         border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .hint { color: var(--muted); padding: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SDDS Browser</h1>
+  <button id="connectBle" class="primary">Connect Bluetooth</button>
+  <button id="connectSerial" class="primary">Connect Serial</button>
+  <button id="disconnect" disabled>Disconnect</button>
+  <button id="reload" disabled>Reload tree</button>
+  <span id="status">not connected</span>
+  <span id="stats"></span>
+</header>
+<main>
+  <section>
+    <h2>Tree</h2>
+    <div id="tree"><div class="hint" id="hint"><b>Connect Bluetooth</b> to a device advertising the Nordic UART Service (listed under its cloud device name), or <b>Connect Serial</b> to a device on USB running the SDDS serial spike (115200 baud).
+Expanding a struct subscribes to its values (<code>L</code>), collapsing unsubscribes (<code>U</code>).</div></div>
+  </section>
+  <section>
+    <h2>Console</h2>
+    <div id="log"></div>
+    <form id="cmdform"><input id="cmd" placeholder="raw command, e.g.  T   |   settings.slope=2   |   counter" autocomplete="off"><button>Send</button></form>
+  </section>
+</main>
+<script>
+"use strict";
+const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // we write
+const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // device notifies
+const WRITE_CHUNK = 20; // safe for any MTU; commands are short anyway
+const SERIAL_BAUD = 115200; // TserialSpike default (irrelevant for USB serial, but required by the API)
+const PARTICLE_USB_VID = 0x2b04;
+
+// SDDS type ids (lib/SDDS/src/uTypedef.h)
+const T = { 0x01: "uint8", 0x02: "uint16", 0x04: "uint32", 0x06: "time", 0x11: "int8", 0x12: "int16",
+            0x14: "int32", 0x24: "float32", 0x28: "float64", 0x31: "enum", 0x42: "struct", 0x81: "string" };
+const OPT_READONLY = 0x01, OPT_SAVEVAL = 0x80;
+
+const $ = id => document.getElementById(id);
+let transport = null; // active connection: { kind, name, write(Uint8Array) -> Promise, close() -> Promise }
+let writeQueue = Promise.resolve();
+let rxBuf = "", decoder = new TextDecoder();
+let root = null, ports = new Map(), nextPort = 1, freePorts = [];
+let typesRequestedAt = 0, bytesIn = 0, bytesOut = 0;
+
+/* ---------------- logging ---------------- */
+function log(text, cls = "") {
+  const el = $("log");
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = text.length > 400 ? text.slice(0, 400) + ` …(${text.length} chars)` : text;
+  el.appendChild(line);
+  while (el.childNodes.length > 500) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+function updateStats(extra) {
+  $("stats").textContent = `rx ${bytesIn} B · tx ${bytesOut} B · subs ${ports.size}` + (extra ? " · " + extra : "");
+}
+
+/* ---------------- connection handling (shared by all transports) ---------------- */
+function setButtons() {
+  const connected = !!transport;
+  $("connectBle").disabled = connected || !navigator.bluetooth;
+  $("connectSerial").disabled = connected || !navigator.serial;
+  $("disconnect").disabled = !connected;
+  $("reload").disabled = !connected;
+}
+
+function onConnected(t) {
+  transport = t;
+  rxBuf = ""; decoder = new TextDecoder(); writeQueue = Promise.resolve();
+  bytesIn = 0; bytesOut = 0; updateStats();
+  $("status").textContent = `connected (${t.kind}): ${t.name}`;
+  $("status").className = "on";
+  setButtons();
+  log(`connected via ${t.kind} to ${t.name}`, "sys");
+  // BLE doesn't tell the device who connected -> announce ourselves (shows up in SYSTEM.bluetooth.connection)
+  if (t.kind === "bluetooth") send(`@client ${clientDescription()}`);
+  requestTypes();
+}
+
+function onDisconnected() {
+  if (!transport) return;
+  log(`disconnected (${transport.kind})`, "sys");
+  transport = null;
+  $("status").textContent = "not connected"; $("status").className = "";
+  rxBuf = ""; ports.clear(); freePorts = []; nextPort = 1;
+  setButtons();
+  updateStats();
+}
+
+// incoming bytes from any transport -> newline separated messages
+function onData(bytes) {
+  bytesIn += bytes.byteLength;
+  rxBuf += decoder.decode(bytes, { stream: true });
+  let i;
+  while ((i = rxBuf.indexOf("\n")) >= 0) {
+    const line = rxBuf.slice(0, i).replace(/\r$/, "");
+    rxBuf = rxBuf.slice(i + 1);
+    if (line) handleLine(line);
+  }
+  // show progress for large transfers (e.g. the type tree)
+  if (typesRequestedAt && rxBuf.length > 0) updateStats(`receiving ${rxBuf.length} B…`);
+}
+
+function send(line, quiet = false) {
+  if (!transport) return;
+  if (!quiet) log("> " + line, "out");
+  const data = new TextEncoder().encode(line + "\n");
+  const t = transport;
+  writeQueue = writeQueue.then(async () => {
+    await t.write(data);
+    bytesOut += data.length;
+    updateStats();
+  }).catch(e => log("write failed: " + e.message, "err"));
+}
+
+function clientDescription() {
+  const ua = navigator.userAgent;
+  const browser = /Bluefy/i.test(ua) ? "Bluefy" : /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera"
+                : /Chrome\//.test(ua) ? "Chrome" : "browser";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Mac OS X/.test(ua) ? "macOS"
+           : /Windows/.test(ua) ? "Windows" : /CrOS/.test(ua) ? "ChromeOS" : /Linux/.test(ua) ? "Linux" : "unknown OS";
+  return `${browser} on ${os}`;
+}
+
+/* ---------------- Bluetooth transport (Web Bluetooth, Nordic UART Service) ---------------- */
+async function connectBluetooth() {
+  if (!navigator.bluetooth) {
+    log("Web Bluetooth not available - use Chrome/Edge (desktop or Android) or Bluefy (iOS) over https:// or http://localhost", "err");
+    return;
+  }
+  try {
+    const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
+    $("status").textContent = "connecting…";
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(NUS);
+    const rxChar = await svc.getCharacteristic(NUS_RX);
+    const txChar = await svc.getCharacteristic(NUS_TX);
+    txChar.addEventListener("characteristicvaluechanged", ev => onData(ev.target.value));
+    await txChar.startNotifications();
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    onConnected({
+      kind: "bluetooth",
+      name: device.name || device.id,
+      write: async data => {
+        // small chunks: safe for any ATT MTU, the device reassembles up to the newline
+        for (let o = 0; o < data.length; o += WRITE_CHUNK) {
+          const chunk = data.slice(o, o + WRITE_CHUNK);
+          if (rxChar.writeValueWithResponse) await rxChar.writeValueWithResponse(chunk);
+          else await rxChar.writeValue(chunk);
+        }
+      },
+      close: async () => device.gatt.disconnect() // fires gattserverdisconnected
+    });
+  } catch (e) {
+    log("bluetooth connect failed: " + e.message, "err");
+    if (!transport) $("status").textContent = "not connected";
+  }
+}
+
+/* ---------------- Serial transport (Web Serial, SDDS serial spike) ---------------- */
+async function connectSerial() {
+  if (!navigator.serial) {
+    log("Web Serial not available - use Chrome/Edge on a desktop computer over https:// or http://localhost", "err");
+    return;
+  }
+  let port = null;
+  try {
+    port = await navigator.serial.requestPort();
+    $("status").textContent = "connecting…";
+    await port.open({ baudRate: SERIAL_BAUD });
+  } catch (e) {
+    log("serial connect failed: " + e.message + (e.name === "InvalidStateError" ? " (port already open, e.g. in a serial monitor?)" : ""), "err");
+    if (!transport) $("status").textContent = "not connected";
+    return;
+  }
+  const reader = port.readable.getReader();
+  const writer = port.writable.getWriter();
+  let closing = false;
+  const shutdown = async () => {
+    try { reader.releaseLock(); } catch (e) {}
+    try { writer.releaseLock(); } catch (e) {}
+    try { await port.close(); } catch (e) {}
+    onDisconnected();
+  };
+  const info = port.getInfo();
+  onConnected({
+    kind: "serial",
+    name: info.usbVendorId === PARTICLE_USB_VID ? "Particle device (USB)"
+        : info.usbVendorId !== undefined ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId || 0).toString(16)}` : "serial port",
+    write: data => writer.write(data),
+    close: async () => {
+      closing = true;
+      try { await reader.cancel(); } catch (e) {}
+      await shutdown();
+    }
+  });
+  // read loop (ends when the port is closed or the device is unplugged / restarts)
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) onData(value);
+    }
+  } catch (e) {
+    if (!closing) log("serial connection lost: " + e.message, "err");
+  }
+  if (!closing) await shutdown();
+}
+
+/* ---------------- protocol ---------------- */
+// SDDS emits '' for struct entries in value arrays ([1,,2]) and bare tokens like inf -> make it valid JSON
+function parseLoose(s) {
+  let out = "", inStr = false, esc = false, prev = "", tok = "";
+  const flushTok = () => {
+    if (!tok) return;
+    out += /^(-?\d+(\.\d+)?([eE][+-]?\d+)?|true|false|null)$/.test(tok) ? tok : JSON.stringify(tok);
+    prev = "v"; tok = "";
+  };
+  for (const c of s) {
+    if (inStr) { out += c; if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') { inStr = false; prev = "v"; } continue; }
+    if (c === '"') { flushTok(); inStr = true; out += c; continue; }
+    if ("[]{},:".includes(c)) {
+      flushTok();
+      if ((c === "," || c === "]") && (prev === "[" || prev === ",") && !(c === "]" && prev === "[")) out += "null";
+      out += c; prev = c; continue;
+    }
+    if (/\s/.test(c)) { flushTok(); continue; }
+    tok += c;
+  }
+  flushTok();
+  return JSON.parse(out);
+}
+
+function handleLine(line) {
+  const cmd = line[0];
+  if (cmd === "t" && line[1] === " ") {
+    const m = line.match(/^t (\d+) (.*)$/s);
+    const dt = (performance.now() - typesRequestedAt) / 1000;
+    log(`< t ${m[1]} … (${line.length} chars in ${dt.toFixed(2)} s = ${(line.length / dt / 1024).toFixed(1)} kB/s)`);
+    typesRequestedAt = 0;
+    updateStats(`tree ${line.length} B / ${dt.toFixed(1)} s`);
+    try { buildTree(parseLoose(m[2])); } catch (e) { log("could not parse type tree: " + e.message, "err"); }
+    return;
+  }
+  if (cmd === "l" && line[1] === " ") {
+    const m = line.match(/^l (\d+) (\d+) (.*)$/s);
+    if (!m) return log("< " + line, "err");
+    const node = ports.get(+m[1]);
+    if (!node) return;
+    try { applyValues(node, +m[2], parseLoose(m[3])); } catch (e) { log("bad values: " + line, "err"); }
+    return;
+  }
+  if (cmd === "E" && line[1] === " ") return log("< " + line, "err");
+  if (cmd === "u" && line[1] === " ") return;
+  log("< " + line);
+}
+
+function requestTypes() {
+  root = null; ports.clear(); freePorts = []; nextPort = 1;
+  $("tree").innerHTML = '<div class="hint">loading type tree…</div>';
+  typesRequestedAt = performance.now();
+  send("T");
+}
+
+/* ---------------- tree model + rendering ---------------- */
+function buildTree(json) {
+  const enums = json.e || {};
+  const mk = (entry, parentPath) => {
+    const [typeId, opt, name, extra, maybeChildren] = entry;
+    const node = { typeId, type: T[typeId] || ("0x" + typeId.toString(16)), opt, name,
+                   path: parentPath ? parentPath + "." + name : name, value: undefined };
+    if (node.type === "enum") node.enumValues = Array.isArray(extra) ? extra : (enums[String(extra)] || []);
+    if (node.type === "struct") {
+      const kids = Array.isArray(extra) ? extra : maybeChildren;
+      node.children = (kids || []).map(k => mk(k, node.path));
+    }
+    return node;
+  };
+  root = { type: "struct", name: "", path: "", children: json.d.map(k => mk(k, "")) };
+  const container = $("tree");
+  container.innerHTML = "";
+  container.appendChild(renderChildren(root));
+  subscribe(root);
+}
+
+function renderChildren(node) {
+  const wrap = document.createElement("div");
+  for (const c of node.children) wrap.appendChild(renderNode(c));
+  return wrap;
+}
+
+function renderNode(n) {
+  const el = document.createElement("div");
+  const row = document.createElement("div");
+  row.className = "row";
+  const name = document.createElement("div");
+  name.className = "name"; name.textContent = n.name; name.title = n.path;
+  name.style.paddingLeft = `${(n.path.split(".").length - 1) * 16}px`; // nesting depth
+  const val = document.createElement("div");
+  val.className = "val";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = n.type + (n.opt & OPT_SAVEVAL ? " · saved" : "") + (n.opt & OPT_READONLY ? " · ro" : "");
+  row.append(name, val, meta);
+  el.appendChild(row);
+  n.el = el; n.valEl = val;
+
+  if (n.type === "struct") {
+    el.className = "struct";
+    const kids = renderChildren(n);
+    kids.className = "children";
+    el.appendChild(kids);
+    name.onclick = () => {
+      const open = el.classList.toggle("open");
+      if (open) subscribe(n); else unsubscribe(n);
+    };
+    meta.textContent = `struct · ${n.children.length}`;
+  } else if (n.opt & OPT_READONLY) {
+    val.classList.add("ro");
+  } else if (n.type === "enum") {
+    // one button per enum value: the current value is highlighted (and disabled), the others set the value
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    n.enumBtns = new Map();
+    for (const v of n.enumValues) {
+      const b = document.createElement("button");
+      b.textContent = v; b.onclick = () => send(`${n.path}=${v}`);
+      btns.appendChild(b); n.enumBtns.set(v, b);
+    }
+    val.appendChild(btns);
+  } else {
+    const inp = document.createElement("input");
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = fmt(n.value); inp.dataset.dirty = ""; inp.blur(); } };
+    inp.oninput = () => inp.dataset.dirty = "1";
+    inp.onblur = () => { if (inp.dataset.dirty) { inp.dataset.dirty = ""; send(`${n.path}=${inp.value}`); } };
+    val.appendChild(inp); n.input = inp;
+  }
+  return el;
+}
+
+function fmt(v) { return v === null || v === undefined ? "" : String(v); }
+
+function applyValues(structNode, first, values) {
+  values.forEach((v, i) => {
+    const n = structNode.children[first + i];
+    if (!n || n.type === "struct") return;
+    const changed = n.value !== undefined && n.value !== v;
+    n.value = v;
+    if (n.input) {
+      if (document.activeElement !== n.input) n.input.value = fmt(v);
+    } else if (n.enumBtns) {
+      for (const [ev, b] of n.enumBtns) { const sel = ev === v; b.classList.toggle("sel", sel); b.disabled = sel; }
+    } else {
+      n.valEl.textContent = fmt(v);
+    }
+    if (changed) { n.el.firstChild.classList.remove("flash"); void n.el.offsetWidth; n.el.firstChild.classList.add("flash"); }
+  });
+}
+
+function subscribe(node) {
+  if (node.port) return;
+  const port = freePorts.pop() || nextPort++;
+  if (port > 255) { log("too many subscriptions (max 255)", "err"); return; }
+  node.port = port; ports.set(port, node);
+  send(node.path ? `L ${port} ${node.path}` : `L ${port}`, true);
+  updateStats();
+}
+
+function unsubscribe(node) {
+  // also unsubscribe any open descendants (they are hidden now)
+  for (const c of node.children || []) if (c.type === "struct" && c.port) { c.el.classList.remove("open"); unsubscribe(c); }
+  if (!node.port) return;
+  send(`U ${node.port}`, true);
+  ports.delete(node.port); freePorts.push(node.port); node.port = 0;
+  updateStats();
+}
+
+/* ---------------- UI wiring ---------------- */
+$("connectBle").onclick = connectBluetooth;
+$("connectSerial").onclick = connectSerial;
+$("disconnect").onclick = () => transport && transport.close();
+$("reload").onclick = () => {
+  for (const port of ports.keys()) send(`U ${port}`, true);
+  requestTypes();
+};
+$("cmdform").onsubmit = e => {
+  e.preventDefault();
+  const v = $("cmd").value.trim();
+  if (v) send(v);
+  $("cmd").value = "";
+};
+setButtons();
+updateStats();
+
+// phones have no visible devtools -> surface errors and capabilities in the in-page console
+window.addEventListener("error", e => log(`JS error: ${e.message} (${e.filename}:${e.lineno})`, "err"));
+window.addEventListener("unhandledrejection", e => log(`JS error: ${e.reason && e.reason.message || e.reason}`, "err"));
+log(`${navigator.userAgent}`, "sys");
+log(`secure context: ${window.isSecureContext} · web bluetooth: ${!!navigator.bluetooth} · web serial: ${!!navigator.serial}`,
+    navigator.bluetooth || navigator.serial ? "sys" : "err");
+</script>
+</body>
+</html>
