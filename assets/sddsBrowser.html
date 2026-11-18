@@ -60,6 +60,7 @@
   .row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .name { font-family: var(--mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .struct > .row .name { cursor: pointer; font-weight: 600; }
+  .name .units { color: var(--muted); font-weight: normal; }
   .struct > .row .name::before { content: "▸ "; color: var(--muted); }
   .struct.open > .row .name::before { content: "▾ "; }
   .children { display: none; }
@@ -405,7 +406,14 @@ function renderNode(n) {
   const row = document.createElement("div");
   row.className = "row";
   const name = document.createElement("div");
-  name.className = "name"; name.textContent = n.name; name.title = n.path;
+  name.className = "name"; name.title = n.path;
+  const { base, units } = splitUnits(n.name);
+  name.textContent = base;
+  if (units) {
+    const u = document.createElement("span");
+    u.className = "units"; u.textContent = ` [${units}]`;
+    name.appendChild(u);
+  }
   name.style.paddingLeft = `${(n.path.split(".").length - 1) * 16}px`; // nesting depth
   const val = document.createElement("div");
   val.className = "val";
@@ -448,6 +456,13 @@ function renderNode(n) {
     val.appendChild(inp); n.input = inp;
   }
   return el;
+}
+
+// units convention: everything after the first "_" of a name, remaining "_" -> "/"
+// e.g. setpoint_rpm -> setpoint [rpm], volume_mL_min -> volume [mL/min]
+function splitUnits(name) {
+  const m = name.match(/^(.+?)_(.+)$/);
+  return m ? { base: m[1], units: m[2].replace(/_/g, "/") } : { base: name, units: "" };
 }
 
 function fmt(v) { return v === null || v === undefined ? "" : String(v); }
