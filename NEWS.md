@@ -7,6 +7,8 @@
 - the burst queue is limited by free RAM: below a reserve (256 kB on P2/M-SoM, 48 kB on Argon/Boron,
   `SDDS_PARTICLE_RESERVE_RAM` to override) the oldest queued bursts are discarded (counted in
   `publishing.bursts.discarded`), then the oldest data of the current burst, instead of running out of memory
+- bluetooth clients can download copies of the queued data with `@data [time base]` (only bursts newer than
+  the given time base); the queue itself is never changed by this, the data still goes to the cloud
 - the open burst is no longer serialized every burst timer cycle while waiting for a valid time
   (only when trace logging is on)
 
@@ -57,6 +59,8 @@ the browser, without the cloud:
   (both hidden by default, choice remembered per browser; a red dot flags new errors while the
   console is collapsed)
 - works on phone screens (stacked layout, larger touch targets)
+- *Device data* panel (*Fetch device data* button, bluetooth): downloads the device's queued data bursts (only the ones not yet stored
+  in the browser), keeps them in the browser and saves them as JSON (same format as the cloud event data)
 - on disconnect the tree is grayed out; reconnecting to the same device restores the open submenus
   (also on reload)
 - flash application firmware (`.bin`) over USB from the browser (desktop Chrome/Edge): reads the module

@@ -67,6 +67,8 @@ public:
 	using TstatusCallback = std::function<void(Tstatus _status, const char *_peer)>;
 	// called (in the application thread) when the clock was set from a client's @time
 	using TtimeCallback = std::function<void()>;
+	// called (in the application thread) for a registered "@<name> [args]" client command (see onCommand)
+	using TcommandCallback = std::function<void(const char *_args)>;
 
 	// tuning parameters
 	static constexpr size_t TX_BUFFER_MAX = 16 * 1024; // max pending outgoing bytes (messages beyond are dropped)
@@ -179,6 +181,7 @@ private:
 	String Fpeer; // peer description (announced client name or address)
 	TstatusCallback FstatusCallback;
 	TtimeCallback FtimeCallback;
+	std::vector<std::pair<String, TcommandCallback>> Fcommands; // registered @ commands
 
 	// advertised name
 	String FfallbackName = "SDDS";
@@ -297,6 +300,37 @@ public:
 
 	void onStatusChange(TstatusCallback _cb) { FstatusCallback = _cb; }
 	void onTimeSet(TtimeCallback _cb) { FtimeCallback = _cb; }
+
+	/**
+	 * @brief register a handler for an out-of-band client command (not an SDDS command),
+	 * e.g. onCommand("@data", ...) handles the lines "@data" and "@data <args>"
+	 */
+	void onCommand(const char *_cmd, TcommandCallback _cb) { Fcommands.push_back({String(_cmd), _cb}); }
+
+	/**
+	 * @brief free space in the tx buffer (0 if not connected)
+	 */
+	size_t txFree()
+	{
+		if (!Fconnected)
+			return 0;
+		size_t pending = Ftx.size() - FtxPos;
+		return pending >= TX_BUFFER_MAX ? 0 : TX_BUFFER_MAX - pending;
+	}
+
+	/**
+	 * @brief send a line (newline is appended) to the connected client if it fits into the tx buffer
+	 * @return false if not connected or no room (nothing is sent)
+	 */
+	bool sendLine(const char *_str, size_t _len)
+	{
+		if (_len + 1 > txFree())
+			return false;
+		Ftx.append(_str, _len);
+		Ftx.push_back('\n');
+		return true;
+	}
+	bool sendLine(const String &_line) { return sendLine(_line.c_str(), _line.length()); }
 
 	Tstatus status() { return Fstatus; }
 	const char *peer() { return Fpeer.c_str(); }
@@ -481,6 +515,19 @@ private:
 		{
 			syncTime(FrxLine.c_str() + n);
 			return;
+		}
+		// registered out-of-band commands
+		for (auto &cmd : Fcommands)
+		{
+			n = cmd.first.length();
+			if (FrxLine.compare(0, n, cmd.first.c_str()) == 0 && (FrxLine.size() == n || FrxLine[n] == ' '))
+			{
+				const char *args = FrxLine.c_str() + n;
+				while (*args == ' ')
+					args++;
+				cmd.second(args);
+				return;
+			}
 		}
 		FcommHandler.handleMessage(FrxLine.c_str());
 	}

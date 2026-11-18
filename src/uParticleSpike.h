@@ -318,6 +318,9 @@ private:
 		}
 
 	public:
+		// key of the time base in data bursts (ISO 8601 string)
+		static const char *burstTimeBaseKey() { return FburstTimeBaseKey; }
+
 		/**
 		 * @brief format a unix time in milliseconds as an ISO8601 timestamp with
 		 * millisecond precision (e.g. 2026-04-10T15:20:32.123Z)
@@ -1234,6 +1237,51 @@ private:
 		}
 
 		/**
+		 * @brief the earliest queued data burst with a time base later than _after (read-only access
+		 * for the bluetooth data transfer, the queue is not changed). Time bases are ISO 8601 strings
+		 * in the same format and time zone, so they sort as strings. Pass "" to get the earliest one.
+		 * @return nullptr if there is none
+		 */
+		const Variant *nextQueuedBurst(const String &_after)
+		{
+			const Variant *next = nullptr;
+			String nextTb;
+			for (int i = 0; i < FqueuedBursts.size(); i++)
+			{
+				const Variant &burst = FqueuedBursts[i];
+				if (!burst.isMap() || !burst.has(TparticleSerializer::burstTimeBaseKey()))
+					continue; // not a data burst (e.g. a queued tree/state snapshot)
+				String tb = burst.get(TparticleSerializer::burstTimeBaseKey()).asString();
+				if (tb.length() == 0 || (_after.length() > 0 && tb.compareTo(_after) <= 0))
+					continue;
+				if (!next || tb.compareTo(nextTb) < 0)
+				{
+					next = &burst;
+					nextTb = tb;
+				}
+			}
+			return next;
+		}
+
+		/**
+		 * @brief number of queued data bursts with a time base later than _after ("" = all)
+		 */
+		size_t countQueuedBursts(const String &_after)
+		{
+			size_t n = 0;
+			for (int i = 0; i < FqueuedBursts.size(); i++)
+			{
+				const Variant &burst = FqueuedBursts[i];
+				if (!burst.isMap() || !burst.has(TparticleSerializer::burstTimeBaseKey()))
+					continue;
+				String tb = burst.get(TparticleSerializer::burstTimeBaseKey()).asString();
+				if (tb.length() > 0 && (_after.length() == 0 || tb.compareTo(_after) > 0))
+					n++;
+			}
+			return n;
+		}
+
+		/**
 		 * @brief queues Variant for publication, typically data is added through
 		 * addToBurst but this function can be used to queue any data directly
 		 * for publication
@@ -1967,6 +2015,15 @@ private:
 #if Wiring_BLE
 	// bluetooth spike: sdds tree access via BLE (status in SYSTEM.bluetooth)
 	TbleSpike Fble;
+
+	// bluetooth data transfer: copies of the queued data bursts (the queue itself is never changed)
+	static constexpr size_t BLE_DATA_CHUNK = 1024; // max JSON characters per line
+	Ttimer FbleDataTimer;						   // sends the next lines while the tx buffer has room
+	bool FbleDataActive = false;
+	String FbleDataCursor; // time base of the last burst that was sent
+	String FbleDataJson;   // JSON of the burst currently being sent
+	size_t FbleDataPos = 0;
+	uint32_t FbleDataSent = 0;
 #endif
 
 	// Timer for global publishing interval
@@ -2261,6 +2318,12 @@ public:
 		};
 
 #if Wiring_BLE
+		// bluetooth data transfer (see startBleData)
+		on(FbleDataTimer)
+		{
+			sendBleData();
+		};
+
 		// bluetooth on/off (ignored until the ble spike is started after the state is loaded, see on(sdds::setup()))
 		on(particleSystem().bluetooth.state)
 		{
@@ -2554,8 +2617,79 @@ public:
 				bt.connection = _peer; });
 		Fble.onTimeSet([]()
 					   { particleSystem().vitals.timeSource = TparticleSystem::TtimeSource::bluetooth; });
+		Fble.onCommand("@data", [this](const char *_args)
+					   { startBleData(_args); });
 #endif
 	}
+
+#if Wiring_BLE
+	/**
+	 * @brief "@data [time base]": send copies of all queued data bursts with a time base later than
+	 * the given one (all if omitted) to the bluetooth client, oldest first. The queue is NOT changed
+	 * (the bursts are still published to the cloud once the device is online).
+	 * Response lines:
+	 *   "@data begin <n>"   number of bursts that will be sent
+	 *   "@d+ <json part>"   part of a burst's JSON (more parts follow)
+	 *   "@d <json part>"    last part of a burst's JSON (concatenate the parts to get the burst)
+	 *   "@data end <n>"     number of bursts sent (can differ from begin if the queue changed meanwhile)
+	 */
+	void startBleData(const char *_after)
+	{
+		FbleDataCursor = _after;
+		FbleDataCursor.trim();
+		FbleDataJson = "";
+		FbleDataPos = 0;
+		FbleDataSent = 0;
+		FbleDataActive = true;
+		Log.info("bluetooth data transfer: sending queued bursts after '%s'", FbleDataCursor.c_str());
+		Fble.sendLine(String("@data begin ") + String((unsigned long)Fpublisher.countQueuedBursts(FbleDataCursor)));
+		FbleDataTimer.start(0);
+	}
+
+	void sendBleData()
+	{
+		if (!FbleDataActive)
+			return;
+		if (!Fble.connected())
+		{
+			Log.info("bluetooth data transfer: client disconnected after %lu bursts", (unsigned long)FbleDataSent);
+			FbleDataActive = false;
+			FbleDataJson = "";
+			return;
+		}
+		// fill the tx buffer as far as possible, then wait for it to drain
+		while (Fble.txFree() > BLE_DATA_CHUNK + 16)
+		{
+			if (FbleDataPos >= FbleDataJson.length())
+			{
+				// next burst (looked up by time base each time, so queue changes in between are fine)
+				const Variant *burst = Fpublisher.nextQueuedBurst(FbleDataCursor);
+				if (!burst)
+				{
+					Fble.sendLine(String("@data end ") + String((unsigned long)FbleDataSent));
+					Log.info("bluetooth data transfer: sent %lu bursts", (unsigned long)FbleDataSent);
+					FbleDataActive = false;
+					FbleDataJson = "";
+					return;
+				}
+				FbleDataCursor = burst->get(TparticleSerializer::burstTimeBaseKey()).asString();
+				FbleDataJson = burst->toJSON();
+				FbleDataPos = 0;
+				FbleDataSent++;
+			}
+			// next part (never split a multi-byte UTF-8 character)
+			size_t len = std::min(BLE_DATA_CHUNK, (size_t)FbleDataJson.length() - FbleDataPos);
+			while (len > 1 && FbleDataPos + len < FbleDataJson.length() && ((uint8_t)FbleDataJson[FbleDataPos + len] & 0xC0) == 0x80)
+				len--;
+			bool last = FbleDataPos + len >= FbleDataJson.length();
+			String line = String(last ? "@d " : "@d+ ") + FbleDataJson.substring(FbleDataPos, FbleDataPos + len);
+			if (!Fble.sendLine(line))
+				break;
+			FbleDataPos += len;
+		}
+		FbleDataTimer.start(20);
+	}
+#endif
 
 #if Wiring_BLE
 	/**

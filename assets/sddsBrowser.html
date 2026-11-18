@@ -91,7 +91,9 @@
   .hint { color: var(--muted); padding: 12px; }
 
   /* firmware flashing panel (spans the full width above tree + console) */
-  #flashPanel { grid-column: 1 / -1; }
+  #flashPanel, #dataPanel { grid-column: 1 / -1; }
+  #dataPanel .body { padding: 10px 12px; display: grid; gap: 10px; }
+  #dataPanel .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   #flashPanel .body { padding: 10px 12px; display: grid; gap: 10px; }
   #flashPanel .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   #flashInfo { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: var(--muted); }
@@ -130,11 +132,27 @@
   <button id="connectSerial" class="primary">Connect Serial</button>
   <button id="disconnect" hidden>Disconnect</button>
   <button id="reload" hidden>Reload tree</button>
+  <button id="dataOpen" hidden title="download the data queued on the device (bluetooth)">Fetch device data</button>
   <button id="flashOpen" hidden title="flash a new firmware .bin over USB (DFU)">Flash firmware</button>
   <span id="status">not connected</span>
   <span id="stats"></span>
 </header>
 <main>
+  <section id="dataPanel" hidden>
+    <h2>Device data <button id="dataClose" class="toggle">close</button></h2>
+    <div class="body">
+      <div class="row2">
+        <button id="dataGet" class="primary" title="download the queued bursts that are newer than the newest one stored in this browser">Fetch data</button>
+        <button id="dataSave" title="save all bursts stored in this browser for this device as a JSON file">Save JSON</button>
+        <button id="dataClear" title="delete the bursts stored in this browser for this device (not on the device) - the next Fetch data downloads everything again">Clear cache</button>
+      </div>
+      <div id="dataInfo">Downloads copies of the data bursts queued on the device (data recorded while it was offline).
+The queue on the device is not changed - the data is still published to the cloud once the device is online.
+Downloaded bursts are stored in this browser, so <b>Fetch data</b> only transfers bursts it doesn't have yet.</div>
+      <progress id="dataProgress" value="0" max="1" hidden></progress>
+      <div id="dataStep"></div>
+    </div>
+  </section>
   <section id="flashPanel" hidden>
     <h2>Flash firmware <button id="flashClose" class="toggle">close</button></h2>
     <div class="body">
@@ -210,6 +228,10 @@ function setButtons() {
   $("connectSerial").hidden = connected; $("connectSerial").disabled = !navigator.serial;
   $("disconnect").hidden = !connected;
   $("reload").hidden = !connected;
+  // the data transfer is a bluetooth spike command
+  $("dataOpen").hidden = !(connected && transport.kind === "bluetooth");
+  if ($("dataOpen").hidden) $("dataPanel").hidden = true;
+  $("dataGet").disabled = !connected || dataXfer.active;
   // raw commands need a device to go to
   $("cmd").disabled = !connected;
   $("cmdform").querySelector("button").disabled = !connected;
@@ -243,6 +265,10 @@ function onDisconnected() {
   transport = null;
   $("status").textContent = "not connected"; $("status").className = "";
   rxBuf = ""; ports.clear(); freePorts = []; nextPort = 1;
+  if (dataXfer.active) {
+    dataXfer.active = false; dataXfer.buf = "";
+    dataStep(`disconnected after ${dataXfer.done} burst(s) - those are stored, Fetch data continues from there`);
+  }
   setButtons();
   updateStats("");
 }
@@ -403,6 +429,7 @@ function parseLoose(s) {
 }
 
 function handleLine(line) {
+  if (line[0] === "@" && handleDataLine(line)) return;
   const cmd = line[0];
   if (cmd === "t" && line[1] === " ") {
     const m = line.match(/^t (\d+) (.*)$/s);
@@ -621,6 +648,132 @@ function parseModuleHeader(buf) {
 
 function flashStep(text, cls = "") { $("flashStep").textContent = text; $("flashStep").className = cls; if (text) log("flash: " + text, cls === "err" ? "err" : "sys"); }
 function flashProgress(done, total) { const p = $("flashProgress"); p.hidden = !total; p.max = total || 1; p.value = done || 0; }
+
+/* ---------------- queued data download (bluetooth "@data") ---------------- */
+// bursts are stored in IndexedDB per device (bluetooth name = cloud device name), keyed by their time base (tb)
+const dataXfer = { active: false, buf: "", total: 0, done: 0, device: "", writes: Promise.resolve() };
+let dataDb = null;
+
+function dataDbOpen() {
+  if (dataDb) return Promise.resolve(dataDb);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("sddsBrowser", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("bursts", { keyPath: ["device", "tb"] });
+    req.onsuccess = () => resolve(dataDb = req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+// run fn(store) in a transaction, resolves with the request result
+async function dataDbDo(mode, fn) {
+  const db = await dataDbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("bursts", mode);
+    const req = fn(tx.objectStore("bursts"));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+const dataRange = device => IDBKeyRange.bound([device, ""], [device, "\uffff"]);
+async function dataLatestTb(device) {
+  const db = await dataDbOpen();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction("bursts").objectStore("bursts").openCursor(dataRange(device), "prev");
+    req.onsuccess = () => resolve(req.result ? req.result.value.tb : "");
+    req.onerror = () => reject(req.error);
+  });
+}
+function dataStep(text) { $("dataStep").textContent = text; }
+async function dataShowStored() {
+  if (!transport) return;
+  try {
+    const device = transport.name;
+    const n = await dataDbDo("readonly", st => st.count(dataRange(device)));
+    const latest = n ? await dataLatestTb(device) : "";
+    if (!dataXfer.active) dataStep(n ? `stored in this browser for ${device}: ${n} burst(s), newest ${latest}` : `nothing stored in this browser for ${device} yet`);
+  } catch (e) { dataStep("browser storage not available: " + e.message); }
+}
+
+async function dataRequest() {
+  if (!transport || dataXfer.active) return;
+  const device = transport.name;
+  let after = "";
+  try { after = await dataLatestTb(device); }
+  catch (e) { return dataStep("browser storage not available: " + e.message); }
+  Object.assign(dataXfer, { active: true, buf: "", total: 0, done: 0, device });
+  setButtons();
+  $("dataProgress").hidden = false; $("dataProgress").value = 0; $("dataProgress").max = 1;
+  dataStep("requesting queued data…");
+  send(after ? `@data ${after}` : "@data");
+}
+
+// "@data begin <n>", "@d+ <part>", "@d <last part>", "@data end <n>" -> true if handled
+function handleDataLine(line) {
+  if (line.startsWith("@d+ ")) { dataXfer.buf += line.slice(4); return true; }
+  if (line.startsWith("@d ")) {
+    const json = dataXfer.buf + line.slice(3);
+    dataXfer.buf = "";
+    let burst;
+    try { burst = JSON.parse(json); } catch (e) { log(`could not parse queued burst: ${e.message}`, "err"); return true; }
+    if (!burst || typeof burst.tb !== "string") { log("queued burst without time base, skipped", "err"); return true; }
+    const rec = { device: dataXfer.device || (transport && transport.name) || "unknown", tb: burst.tb, burst };
+    dataXfer.writes = dataXfer.writes.then(() => dataDbDo("readwrite", st => st.put(rec)))
+      .catch(e => log("could not store queued burst: " + e.message, "err"));
+    dataXfer.done++;
+    $("dataProgress").value = dataXfer.done;
+    dataStep(`received ${dataXfer.done} of ${dataXfer.total} burst(s) (${burst.tb})`);
+    return true;
+  }
+  let m = line.match(/^@data begin (\d+)$/);
+  if (m) {
+    dataXfer.total = +m[1];
+    $("dataProgress").max = Math.max(1, dataXfer.total);
+    log(`< ${line}`, "sys");
+    dataStep(dataXfer.total ? `receiving ${dataXfer.total} burst(s)…` : "no new data on the device");
+    return true;
+  }
+  m = line.match(/^@data end (\d+)$/);
+  if (m) {
+    log(`< ${line}`, "sys");
+    const n = dataXfer.done;
+    dataXfer.writes.then(async () => {
+      dataXfer.active = false;
+      setButtons();
+      $("dataProgress").hidden = true;
+      await dataShowStored();
+      if (n) $("dataStep").textContent = `received ${n} new burst(s) - ` + $("dataStep").textContent;
+    });
+    return true;
+  }
+  return false;
+}
+
+async function dataSave() {
+  if (!transport) return;
+  const device = transport.name;
+  try {
+    const recs = await dataDbDo("readonly", st => st.getAll(dataRange(device)));
+    if (!recs.length) return dataStep(`nothing stored in this browser for ${device}`);
+    // same format as the cloud event data: an array of bursts (sorted by time base)
+    const blob = new Blob([JSON.stringify(recs.map(r => r.burst))], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${device.replace(/[^\w.-]+/g, "_")}_queued-data_${new Date().toISOString().slice(0, 19).replace(/:/g, "")}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) { dataStep("could not save: " + e.message); }
+}
+
+async function dataClear() {
+  if (!transport) return;
+  try { await dataDbDo("readwrite", st => st.delete(dataRange(transport.name))); await dataShowStored(); }
+  catch (e) { dataStep("could not clear: " + e.message); }
+}
+
+$("dataOpen").onclick = () => { $("dataPanel").hidden = false; dataShowStored(); $("dataPanel").scrollIntoView({ behavior: "smooth" }); };
+$("dataClose").onclick = () => { $("dataPanel").hidden = true; };
+$("dataGet").onclick = () => dataRequest();
+$("dataSave").onclick = dataSave;
+$("dataClear").onclick = dataClear;
 
 $("flashOpen").onclick = () => { $("flashPanel").hidden = false; $("flashPanel").scrollIntoView({ behavior: "smooth" }); };
 $("flashClose").onclick = () => { $("flashPanel").hidden = true; };
