@@ -26,6 +26,12 @@
  * sending a line "@client <description>" (e.g. "@client Chrome on macOS"), which is consumed
  * here (not passed to the SDDS tree) and reported via peer().
  *
+ * Time sync: the P2 has no battery backed clock, so after a power up without a cloud
+ * connection (e.g. local wifi only) the time stays invalid. A client can provide its time by
+ * sending a line "@time <unix time in ms>" (the SDDS browser does this on connect), which
+ * sets the clock ONLY if it is not yet valid - it never overrides a valid (e.g. cloud synced)
+ * time, and a later cloud sync takes precedence. Also consumed here, not passed to the tree.
+ *
  * Threading: Particle BLE callbacks run on the BLE/system thread, NOT in the application
  * loop. They only copy data into mutex-protected buffers / set atomic flags. All SDDS tree
  * access happens in the application thread from a Ttimer (the "pump").
@@ -59,6 +65,8 @@ public:
 
 	// called (in the application thread) whenever status() or peer() changes
 	using TstatusCallback = std::function<void(Tstatus _status, const char *_peer)>;
+	// called (in the application thread) when the clock was set from a client's @time
+	using TtimeCallback = std::function<void()>;
 
 	// tuning parameters
 	static constexpr size_t TX_BUFFER_MAX = 16 * 1024; // max pending outgoing bytes (messages beyond are dropped)
@@ -68,6 +76,8 @@ public:
 	static constexpr uint8_t CHUNKS_PER_PUMP = 4;	   // max notifications per pump cycle
 	static constexpr size_t MAX_NAME_LENGTH = 29;	   // 31 byte scan response - 2 byte AD header
 	static constexpr const char *CLIENT_CMD = "@client ";
+	static constexpr const char *TIME_CMD = "@time ";
+	static constexpr uint64_t MIN_VALID_TIME_MS = 1704067200000ULL; // 2024-01-01, sanity check for @time
 
 private:
 	/**
@@ -168,6 +178,7 @@ private:
 	Tstatus Fstatus = Tstatus::off;
 	String Fpeer; // peer description (announced client name or address)
 	TstatusCallback FstatusCallback;
+	TtimeCallback FtimeCallback;
 
 	// advertised name
 	String FfallbackName = "SDDS";
@@ -285,6 +296,7 @@ public:
 	}
 
 	void onStatusChange(TstatusCallback _cb) { FstatusCallback = _cb; }
+	void onTimeSet(TtimeCallback _cb) { FtimeCallback = _cb; }
 
 	Tstatus status() { return Fstatus; }
 	const char *peer() { return Fpeer.c_str(); }
@@ -463,7 +475,34 @@ private:
 			setPeer(String(FrxLine.c_str() + n) + " (" + address + ")");
 			return;
 		}
+		// client time (sets the clock only if it is not valid yet)
+		n = strlen(TIME_CMD);
+		if (FrxLine.compare(0, n, TIME_CMD) == 0)
+		{
+			syncTime(FrxLine.c_str() + n);
+			return;
+		}
 		FcommHandler.handleMessage(FrxLine.c_str());
+	}
+
+	void syncTime(const char *_value)
+	{
+		char *end = nullptr;
+		uint64_t ms = strtoull(_value, &end, 10);
+		if (end == _value || ms < MIN_VALID_TIME_MS)
+		{
+			Log.warn("bleSpike: ignoring invalid client time '%s'", _value);
+			return;
+		}
+		if (Time.isValid())
+		{
+			Log.trace("bleSpike: time already valid, ignoring client time");
+			return;
+		}
+		Time.setTime((time_t)((ms + 500) / 1000)); // whole seconds, rounded
+		Log.info("bleSpike: time set from bluetooth client: %s", Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL).c_str());
+		if (FtimeCallback)
+			FtimeCallback();
 	}
 
 	void processRx()

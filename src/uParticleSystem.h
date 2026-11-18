@@ -78,11 +78,14 @@ public:
 
     // vitals variables
     sdds_enum(powerUp, userRestart, userReset, watchdogTimeout, outOfMemory, PANIC) TrestartStatus;
+    // where the current system time came from (ntp = local time server, e.g. on the mqtt broker host)
+    sdds_enum(none, cloud, bluetooth, ntp) TtimeSource;
     class Tvitals : public TmenuHandle
     {
     public:
         sdds_var(Tuint32, publishVitals_sec, sdds::opt::saveval, 60 * 60 * 6);               // how often to publish device vitals in seconds (takes 150 bytes per transmission!), 0 = no regular publishing
         sdds_var(Tstring, time_dt, sdds::opt::readonly);                                     // system time
+        sdds_var(TtimeSource, timeSource, sdds::opt::readonly, TtimeSource::none);          // where the system time came from (last sync)
         sdds_var(Tstring, mac, sdds::opt::readonly);                                         // wifi network - can get this from device list
         sdds_var(Tstring, network, sdds::opt::readonly);                                     // wifi network - can get this from device vitals
         sdds_var(Tuint8, signal_percent, sdds::opt::readonly);                               // wifi signal strength - can get this from device vitals
@@ -183,6 +186,7 @@ sdds_var(TdebugAction, debug)  // debug actions
 
     // time stamp for the clock update
     time32_t FlastNow = 0;
+    system_tick_t FlastCloudTimeSync = 0; // Particle.timeSyncedLast() at the last check (0 = never synced)
 
     // millisecond epoch anchor
     // Time.now() only resolves whole seconds and on some platforms the RTC has no
@@ -401,6 +405,15 @@ public:
                 FsyncTimer.stop();
                 FsyncTimer.start(FtimeSyncInterval);
                 FresyncSysTime = false;
+            }
+
+            // track cloud time syncs for vitals.timeSource (other sources set it themselves)
+            system_tick_t cloudSync = Particle.timeSyncedLast();
+            if (cloudSync != 0 && cloudSync != FlastCloudTimeSync)
+            {
+                FlastCloudTimeSync = cloudSync;
+                if (vitals.timeSource != TtimeSource::cloud)
+                    vitals.timeSource = TtimeSource::cloud;
             }
 
             // update time sdds_var and re-anchor the millisecond epoch on each second rollover

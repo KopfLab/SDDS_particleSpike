@@ -11,6 +11,11 @@ structure version bump):
   - `state` (`ON`/`OFF`, saveable) to turn bluetooth on/off, permanently if the state is saved
   - `status` (`off`, `discoverable`, `connected`)
   - `connection`: the connected client (announced name and/or address)
+- bluetooth clients can set the device time if it is not yet valid (`@time <unix ms>`, sent automatically
+  by the SDDS browser on connect), so devices without a Particle cloud connection (local wifi only)
+  get the correct time from the first bluetooth connection after power up
+- `vitals.timeSource` (`none`, `cloud`, `bluetooth`, `ntp`): where the system time came from
+  (`ntp` is reserved for a local time server, not implemented yet)
 
 ## SDDS browser (`assets/sddsBrowser.html`)
 

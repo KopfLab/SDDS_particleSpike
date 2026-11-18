@@ -65,6 +65,7 @@ The `SYSTEM` structure provides access to the following SDDS variables:
 - **`vitals`** — device health & diagnostics
   - **`publishVitals_sec`** — _saveable_ — how often to automatically publish Particle vitals, in seconds; `0` disables it (default: 6 hours).
   - **`time_dt`** — _read-only_ — the device's system time, synched from the particle cloud (kept in UTC)
+  - **`timeSource`** — _read-only_ — where the system time came from: `none` (no valid time yet, the default after a power up), `cloud` (Particle cloud time sync), `bluetooth` (set by a bluetooth client via `@time` because the device had no valid time), `ntp` (reserved for a local time server, e.g. on the same host as an MQTT broker)
   - **`mac`** — _read-only_ — the device's WiFi MAC address (useful for whitelisting on WiFi networks)
   - **`network`** — _read-only_ — the WiFi network (SSID) the device is currently connected to
   - **`signal_percent`** — _read-only_ — the WiFi/cellular signal strength
@@ -114,6 +115,7 @@ On platforms with Bluetooth LE (e.g. Photon 2 / P2, Argon, Boron), the particle 
 
 - Responses are split into notifications of up to `ATT MTU - 3` bytes (244 bytes on the P2 if the client negotiates the maximum MTU, 20 bytes otherwise) that the client reassembles up to the newline.
 - Clients can identify themselves by sending `@client <description>`, which is shown in `SYSTEM.bluetooth.connection`.
+- Clients can provide the current time by sending `@time <unix time in ms>`. The device only uses it if it has no valid time yet (e.g. after a power up with local wifi only and no Particle cloud connection), it never overrides a valid time and a later cloud time sync takes precedence. The SDDS browser sends this automatically when it connects via bluetooth, so connecting once after power up is enough to give a cloud-less device the correct time (data buffered before that still gets correct timestamps).
 - Only one client can be connected at a time. There is no pairing/authentication: anyone in range can connect and change settings — set `SYSTEM.bluetooth.state=OFF` to turn bluetooth off (and save the state to keep it off after restarts).
 - Bluetooth starts once the saved state is loaded at start-up, so a device whose saved `SYSTEM.bluetooth.state` is `OFF` never becomes discoverable.
 - Implementation: [`src/uBleSpike.h`](src/uBleSpike.h) (`TbleSpike`), managed automatically by `TparticleSpike`.

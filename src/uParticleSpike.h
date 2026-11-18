@@ -2380,6 +2380,8 @@ public:
 				bt.status = status;
 			if (strcmp(bt.connection, _peer) != 0)
 				bt.connection = _peer; });
+		Fble.onTimeSet([]()
+					   { particleSystem().vitals.timeSource = TparticleSystem::TtimeSource::bluetooth; });
 #endif
 	}
 

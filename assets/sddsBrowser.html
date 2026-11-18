@@ -185,7 +185,10 @@ function onConnected(t) {
   setButtons();
   log(`connected via ${t.kind} to ${t.name}`, "sys");
   // BLE doesn't tell the device who connected -> announce ourselves (shows up in SYSTEM.bluetooth.connection)
-  if (t.kind === "bluetooth") send(`@client ${clientDescription()}`);
+  if (t.kind === "bluetooth") {
+    send(`@client ${clientDescription()}`);
+    send(`@time ${Date.now()}`); // device sets its clock from this only if it has no valid time yet
+  }
   requestTypes();
 }
 
