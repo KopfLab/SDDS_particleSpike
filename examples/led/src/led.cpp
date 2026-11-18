@@ -1,7 +1,7 @@
 // example with serialSpike & particleSpike
 // example adapted from https://github.com/mLamneck/SDDS/blob/main/examples/led/led.ino
 
-#define SDDS_PARTICLE_DEBUG 1
+// #define SDDS_PARTICLE_DEBUG 1
 #include "Particle.h"
 #include "uTypedef.h"
 #include "uCoreEnums.h"
@@ -20,7 +20,7 @@ public:
     sdds_var(Tuint32, onTime_ms, sdds::opt::saveval, 500);
     sdds_var(Tuint32, offTime_ms, sdds::opt::saveval, 500);
 
-    // some value and unit to record
+    // some value with dynamic unit for publishing
     sdds_var(Tuint16, value);
     sdds_var(Tstring, valueUnit, sdds::opt::saveval, "ms");
 
