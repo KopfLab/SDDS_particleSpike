@@ -50,7 +50,7 @@
      -> values line up regardless of depth or of how much is in the meta column */
   .row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0 8px;
          align-items: center; padding: 3px 12px; }
-  /* info column (type, saved, ro): hidden by default, "show info" toggles it */
+  /* info column (type, saved, ro): hidden by default, the "details" checkbox toggles it */
   .meta { display: none; }
   body.show-info .meta { display: block; }
   body.show-info .row { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10em; }
@@ -79,6 +79,13 @@
   .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap;
           overflow: hidden; text-overflow: ellipsis; text-align: right; }
   .flash { animation: flash .6s; }
+  /* tree search */
+  #treeSearch { font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0; width: 12em; max-width: 40%;
+                padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  section h2 .toggles { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+  .topToggle { font-size: 12px; text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; }
+  #treeSearchInfo { font-size: 12px; text-transform: none; letter-spacing: 0; }
+  .row.match .name { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 4px; }
   @keyframes flash { from { background: color-mix(in srgb, var(--ok) 25%, transparent); } }
   #log { font-family: var(--mono); font-size: 12px; height: 420px; overflow: auto; padding: 8px 12px;
          white-space: pre-wrap; word-break: break-all; }
@@ -92,6 +99,11 @@
 
   /* firmware flashing panel (spans the full width above tree + console) */
   #flashPanel, #dataPanel { grid-column: 1 / -1; }
+  /* info notice under the header (e.g. which browser to use) */
+  #notice { margin: 12px 16px 0; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px;
+            background: var(--panel); display: flex; gap: 12px; align-items: flex-start; }
+  #notice .text { flex: 1; }
+  #notice button { padding: 1px 8px; font-size: 12px; }
   #dataPanel .body { padding: 10px 12px; display: grid; gap: 10px; }
   #dataPanel .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   #flashPanel .body { padding: 10px 12px; display: grid; gap: 10px; }
@@ -137,6 +149,7 @@
   <span id="status">not connected</span>
   <span id="stats"></span>
 </header>
+<div id="notice" hidden><div class="text"></div><button id="noticeClose" title="dismiss">✕</button></div>
 <main>
   <section id="dataPanel" hidden>
     <h2>Device data <button id="dataClose" class="toggle">close</button></h2>
@@ -169,7 +182,13 @@ the device is in DFU mode.</div>
     </div>
   </section>
   <section>
-    <h2>Tree <button id="infoToggle" class="toggle" title="show/hide the type, saved and read-only info">show info</button></h2>
+    <h2>Tree <input id="treeSearch" type="search" placeholder="search…" autocomplete="off" title="opens all submenus with matching variables (and closes the others)"><span id="treeSearchInfo"></span>
+      <span class="toggles">
+        <label class="topToggle" id="showSystemLabel" hidden title="show the SYSTEM menu"><input type="checkbox" id="showSystem"> system</label>
+        <label class="topToggle" id="showIntervalsLabel" hidden title="show the publish intervals of all variables (SYSTEM.publishing.varIntervals_ms)"><input type="checkbox" id="showIntervals"> intervals</label>
+        <label class="topToggle" id="showHardwareLabel" hidden title="show the HARDWARE menu"><input type="checkbox" id="showHardware"> hardware</label>
+        <label class="topToggle" title="show the type, saved and read-only details of each variable"><input type="checkbox" id="infoToggle"> details</label>
+      </span></h2>
     <div id="tree"><div class="hint" id="hint"><b>Connect Bluetooth</b> to a device advertising the Nordic UART Service (listed under its cloud device name), or <b>Connect Serial</b> to a device on USB running the SDDS serial spike (115200 baud).
 Expanding a struct subscribes to its values (<code>L</code>), collapsing unsubscribes (<code>U</code>).</div></div>
   </section>
@@ -223,9 +242,9 @@ function updateStats(extra) {
 /* ---------------- connection handling (shared by all transports) ---------------- */
 function setButtons() {
   const connected = !!transport;
-  // connect buttons only while not connected (disabled if the browser lacks the API), the others only while connected
-  $("connectBle").hidden = connected; $("connectBle").disabled = !navigator.bluetooth;
-  $("connectSerial").hidden = connected; $("connectSerial").disabled = !navigator.serial;
+  // connect buttons only while not connected (always clickable: explain which browser to use if the API is missing), the others only while connected
+  $("connectBle").hidden = connected;
+  $("connectSerial").hidden = connected;
   $("disconnect").hidden = !connected;
   $("reload").hidden = !connected;
   // the data transfer is a bluetooth spike command
@@ -267,7 +286,7 @@ function onDisconnected() {
   rxBuf = ""; ports.clear(); freePorts = []; nextPort = 1;
   if (dataXfer.active) {
     dataXfer.active = false; dataXfer.buf = "";
-    dataStep(`disconnected after ${dataXfer.done} burst(s) - those are stored, Fetch data continues from there`);
+    dataStep(`<b>Disconnected</b> after <b>${dataXfer.done}</b> bursts. These are cached, <b>Fetch data</b> continues from there.`, true);
   }
   setButtons();
   updateStats("");
@@ -317,11 +336,33 @@ function clientDescription() {
 }
 
 /* ---------------- Bluetooth transport (Web Bluetooth, Nordic UART Service) ---------------- */
+/* ---------------- notices (e.g. unsupported browser) ---------------- */
+function notice(html) { $("notice").querySelector(".text").innerHTML = html; $("notice").hidden = false; }
+$("noticeClose").onclick = () => { $("notice").hidden = true; };
+
+// explain why bluetooth / serial is not available and which browser to use instead
+function unsupported(kind) {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const mobile = ios || /Android/.test(ua);
+  const what = kind === "bluetooth" ? "Bluetooth (Web Bluetooth)" : "USB serial (Web Serial)";
+  let html;
+  if (!window.isSecureContext)
+    html = `<b>${what} needs a secure page.</b> Open this page via <b>https://</b> (e.g. <a href="https://sdds.kopflab.org">sdds.kopflab.org</a>) or <b>http://localhost</b>.`;
+  else if (kind === "bluetooth" && ios)
+    html = `<b>${what} is not supported by Safari or any other browser on iPhone/iPad</b> (they all use Safari's engine). Install the free <b>Bluefy</b> browser from the App Store and open this page there.`;
+  else if (kind === "bluetooth")
+    html = `<b>${what} is not supported by this browser.</b> Use <b>Chrome</b> or <b>Edge</b> (on Mac, Windows, Linux, ChromeOS or Android) - Firefox and Safari don't support it.`;
+  else if (mobile)
+    html = `<b>${what} is not available on phones and tablets.</b> Use <b>Chrome</b> or <b>Edge</b> on a desktop/laptop computer, or connect via <b>Bluetooth</b> instead.`;
+  else
+    html = `<b>${what} is not supported by this browser.</b> Use <b>Chrome</b> or <b>Edge</b> on a desktop/laptop computer - Firefox and Safari don't support it.`;
+  notice(html);
+  log(`${what} not available in this browser`, "err");
+}
+
 async function connectBluetooth() {
-  if (!navigator.bluetooth) {
-    log("Web Bluetooth not available - use Chrome/Edge (desktop or Android) or Bluefy (iOS) over https:// or http://localhost", "err");
-    return;
-  }
+  if (!navigator.bluetooth) return unsupported("bluetooth");
   try {
     const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }] });
     $("status").textContent = "connecting…";
@@ -354,10 +395,7 @@ async function connectBluetooth() {
 
 /* ---------------- Serial transport (Web Serial, SDDS serial spike) ---------------- */
 async function connectSerial(knownPort = null) {
-  if (!navigator.serial) {
-    log("Web Serial not available - use Chrome/Edge on a desktop computer over https:// or http://localhost", "err");
-    return;
-  }
+  if (!navigator.serial) return unsupported("serial");
   let port = knownPort;
   try {
     if (!port) port = await navigator.serial.requestPort();
@@ -484,10 +522,12 @@ function buildTree(json) {
     if (node.type === "struct") {
       const kids = Array.isArray(extra) ? extra : maybeChildren;
       node.children = (kids || []).map(k => mk(k, node.path));
+      for (const c of node.children) c.parent = node;
     }
     return node;
   };
   root = { type: "struct", name: "", path: "", children: json.d.map(k => mk(k, "")) };
+  for (const c of root.children) c.parent = root;
   const container = $("tree");
   container.innerHTML = "";
   container.classList.remove("stale"); container.title = "";
@@ -504,7 +544,74 @@ function buildTree(json) {
     }
   }
   reopen = null;
+  applyTopVisibility();
+  // a search is active -> apply it to the new tree (overrides the reopened submenus)
+  if ($("treeSearch").value.trim().length >= 2) searchTree($("treeSearch").value);
 }
+
+/* ---------------- SYSTEM / intervals / HARDWARE visibility ---------------- */
+// menus that are hidden unless their checkbox (remembered in prefs, unchecked by default) is checked
+const systemNode = () => root && root.children.find(c => c.name === "SYSTEM");
+const TREE_TOGGLES = [
+  { pref: "system", box: "showSystem", find: systemNode },
+  { pref: "intervals", box: "showIntervals", find: () => { const s = systemNode(); const p = s && s.children.find(c => c.name === "publishing");
+                                                          return p && p.children.find(c => c.name === "varIntervals_ms"); } },
+  { pref: "hardware", box: "showHardware", find: () => root && root.children.find(c => c.name === "HARDWARE") },
+];
+const hiddenNodes = () => new Set(TREE_TOGGLES.filter(t => !prefs[t.pref]).map(t => t.find()).filter(Boolean));
+function applyTopVisibility() {
+  for (const t of TREE_TOGGLES) {
+    $(t.box).checked = !!prefs[t.pref];
+    const node = t.find();
+    $(t.box + "Label").hidden = !node; // only offer the checkbox if the device has this menu
+    if (!node) continue;
+    const hide = !prefs[t.pref];
+    node.el.hidden = hide;
+    // hidden menus are closed (and unsubscribed, including open submenus)
+    if (hide && node.el.classList.contains("open")) { node.el.classList.remove("open"); unsubscribe(node); }
+  }
+}
+for (const t of TREE_TOGGLES) $(t.box).onchange = () => {
+  prefs[t.pref] = $(t.box).checked;
+  // intervals is a submenu of SYSTEM: showing it shows SYSTEM, hiding SYSTEM hides it
+  if (t.pref === "intervals" && prefs.intervals) prefs.system = true;
+  if (t.pref === "system" && !prefs.system) prefs.intervals = false;
+  savePrefs(); applyTopVisibility();
+  if ($("treeSearch").value.trim().length >= 2) searchTree($("treeSearch").value);
+};
+
+/* ---------------- tree search ---------------- */
+// opens (and subscribes) all submenus that lead to variables whose name contains the search term
+// (and matching submenus themselves), closes (and unsubscribes) all others, highlights the matches
+function searchTree(text) {
+  const term = text.trim().toLowerCase();
+  if (!root) return;
+  const all = [];
+  const hidden = hiddenNodes();
+  const walk = n => { for (const c of n.children || []) { if (hidden.has(c)) continue; all.push(c); walk(c); } }; // parents before children, skips hidden menus
+  walk(root);
+  document.querySelectorAll(".row.match").forEach(r => r.classList.remove("match"));
+  if (term.length < 2) { $("treeSearchInfo").textContent = ""; return; }
+  const matches = all.filter(n => n.name.toLowerCase().includes(term));
+  if (!matches.length) { $("treeSearchInfo").textContent = "no matches"; return; } // leave the tree as it is
+  const keep = new Set();
+  for (const m of matches) {
+    if (m.type === "struct") keep.add(m);
+    for (let p = m.parent; p && p !== root; p = p.parent) keep.add(p);
+    m.el.firstChild.classList.add("match");
+  }
+  // close the others first (frees subscription ports), then open the kept ones (parents first)
+  for (const n of all) if (n.type === "struct" && !keep.has(n) && n.el.classList.contains("open")) { n.el.classList.remove("open"); unsubscribe(n); }
+  for (const n of all) if (keep.has(n) && !n.el.classList.contains("open")) { n.el.classList.add("open"); subscribe(n); }
+  $("treeSearchInfo").textContent = matches.length ? `${matches.length} match${matches.length === 1 ? "" : "es"}` : "no matches";
+  if (matches.length) matches[0].el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+let treeSearchTimer = null;
+$("treeSearch").oninput = () => { clearTimeout(treeSearchTimer); treeSearchTimer = setTimeout(() => searchTree($("treeSearch").value), 300); };
+$("treeSearch").onkeydown = e => {
+  if (e.key === "Enter") { clearTimeout(treeSearchTimer); searchTree($("treeSearch").value); }
+  if (e.key === "Escape") { $("treeSearch").value = ""; searchTree(""); }
+};
 
 function renderChildren(node) {
   const wrap = document.createElement("div");
@@ -682,15 +789,22 @@ async function dataLatestTb(device) {
     req.onerror = () => reject(req.error);
   });
 }
-function dataStep(text) { $("dataStep").textContent = text; }
-async function dataShowStored() {
+// status line of the device data panel (html = true: text contains markup, values are escaped by the caller)
+function dataStep(text, html = false) { if (html) $("dataStep").innerHTML = text; else $("dataStep").textContent = text; }
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// e.g. "Received 36 new bursts for GEOM-aqua. Total number cached in this browser: 54. Latest burst: ..."
+async function dataShowStored(received = null) {
   if (!transport) return;
   try {
     const device = transport.name;
     const n = await dataDbDo("readonly", st => st.count(dataRange(device)));
     const latest = n ? await dataLatestTb(device) : "";
-    if (!dataXfer.active) dataStep(n ? `stored in this browser for ${device}: ${n} burst(s), newest ${latest}` : `nothing stored in this browser for ${device} yet`);
-  } catch (e) { dataStep("browser storage not available: " + e.message); }
+    if (dataXfer.active) return;
+    const head = received === null ? `Device <b>${esc(device)}</b>.`
+               : received > 0 ? `<b>Received ${received} new bursts</b> for <b>${esc(device)}</b>.`
+               : `<b>No new bursts</b> for <b>${esc(device)}</b>.`;
+    dataStep(`${head} Total number cached in this browser: <b>${n}</b>.` + (n ? ` Latest burst: <b>${esc(latest)}</b>` : ""), true);
+  } catch (e) { dataStep("Browser storage not available: " + e.message); }
 }
 
 async function dataRequest() {
@@ -698,11 +812,11 @@ async function dataRequest() {
   const device = transport.name;
   let after = "";
   try { after = await dataLatestTb(device); }
-  catch (e) { return dataStep("browser storage not available: " + e.message); }
+  catch (e) { return dataStep("Browser storage not available: " + e.message); }
   Object.assign(dataXfer, { active: true, buf: "", total: 0, done: 0, device });
   setButtons();
   $("dataProgress").hidden = false; $("dataProgress").value = 0; $("dataProgress").max = 1;
-  dataStep("requesting queued data…");
+  dataStep("Requesting queued data…");
   send(after ? `@data ${after}` : "@data");
 }
 
@@ -720,7 +834,7 @@ function handleDataLine(line) {
       .catch(e => log("could not store queued burst: " + e.message, "err"));
     dataXfer.done++;
     $("dataProgress").value = dataXfer.done;
-    dataStep(`received ${dataXfer.done} of ${dataXfer.total} burst(s) (${burst.tb})`);
+    dataStep(`Receiving burst <b>${dataXfer.done}</b> of <b>${dataXfer.total}</b> (${esc(burst.tb)})`, true);
     return true;
   }
   let m = line.match(/^@data begin (\d+)$/);
@@ -728,7 +842,7 @@ function handleDataLine(line) {
     dataXfer.total = +m[1];
     $("dataProgress").max = Math.max(1, dataXfer.total);
     log(`< ${line}`, "sys");
-    dataStep(dataXfer.total ? `receiving ${dataXfer.total} burst(s)…` : "no new data on the device");
+    dataStep(dataXfer.total ? `Preparing to fetch <b>${dataXfer.total}</b> bursts…` : "No new bursts on the device.", true);
     return true;
   }
   m = line.match(/^@data end (\d+)$/);
@@ -739,8 +853,7 @@ function handleDataLine(line) {
       dataXfer.active = false;
       setButtons();
       $("dataProgress").hidden = true;
-      await dataShowStored();
-      if (n) $("dataStep").textContent = `received ${n} new burst(s) - ` + $("dataStep").textContent;
+      await dataShowStored(n);
     });
     return true;
   }
@@ -752,21 +865,22 @@ async function dataSave() {
   const device = transport.name;
   try {
     const recs = await dataDbDo("readonly", st => st.getAll(dataRange(device)));
-    if (!recs.length) return dataStep(`nothing stored in this browser for ${device}`);
-    // same format as the cloud event data: an array of bursts (sorted by time base)
-    const blob = new Blob([JSON.stringify(recs.map(r => r.burst))], { type: "application/json" });
+    if (!recs.length) return dataStep(`Nothing cached in this browser for <b>${esc(device)}</b>.`, true);
+    // same format as the cloud event data: an array of bursts (sorted by time base), one burst per line
+    const json = "[\n" + recs.map(r => JSON.stringify(r.burst)).join(",\n") + "\n]\n";
+    const blob = new Blob([json], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${device.replace(/[^\w.-]+/g, "_")}_queued-data_${new Date().toISOString().slice(0, 19).replace(/:/g, "")}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  } catch (e) { dataStep("could not save: " + e.message); }
+  } catch (e) { dataStep("Could not save: " + e.message); }
 }
 
 async function dataClear() {
   if (!transport) return;
   try { await dataDbDo("readwrite", st => st.delete(dataRange(transport.name))); await dataShowStored(); }
-  catch (e) { dataStep("could not clear: " + e.message); }
+  catch (e) { dataStep("Could not clear: " + e.message); }
 }
 
 $("dataOpen").onclick = () => { $("dataPanel").hidden = false; dataShowStored(); $("dataPanel").scrollIntoView({ behavior: "smooth" }); };
@@ -1056,10 +1170,10 @@ function savePrefs() { try { localStorage.setItem("sddsBrowser.prefs", JSON.stri
 function applyPrefs() {
   document.body.classList.toggle("show-info", !!prefs.info);
   document.body.classList.toggle("console-open", !!prefs.console);
-  $("infoToggle").textContent = prefs.info ? "hide info" : "show info";
+  $("infoToggle").checked = !!prefs.info;
   if (prefs.console) { $("consoleToggle").classList.remove("unread"); $("log").scrollTop = $("log").scrollHeight; }
 }
-$("infoToggle").onclick = () => { prefs.info = !prefs.info; savePrefs(); applyPrefs(); };
+$("infoToggle").onchange = () => { prefs.info = $("infoToggle").checked; savePrefs(); applyPrefs(); };
 $("consoleToggle").onclick = () => { prefs.console = !prefs.console; savePrefs(); applyPrefs(); };
 applyPrefs();
 

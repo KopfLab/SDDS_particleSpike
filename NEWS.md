@@ -62,9 +62,14 @@ the browser, without the cloud:
   value highlighted, read-only values as text
 - units in variable names are shown as `[units]` (e.g. `setpoint_rpm` -> `setpoint [rpm]`,
   `flow_mL_min` -> `flow [mL/min]`)
-- optional info column (type, saved, read-only) and a collapsible console with raw command input
+- optional details column (type, saved, read-only) and a collapsible console with raw command input
   (both hidden by default, choice remembered per browser; a red dot flags new errors while the
   console is collapsed)
+- `SYSTEM`, `HARDWARE` and the variable publish intervals (`SYSTEM.publishing.varIntervals_ms`) are hidden in the
+  tree unless their *system* / *hardware* / *intervals* checkboxes are checked (unchecked by default, remembered
+  per browser); the details column is also a checkbox now
+- tree search: opens (and subscribes to) all submenus with variables whose name contains the search term,
+  closes the others and highlights the matches
 - works on phone screens (stacked layout, larger touch targets)
 - *Device data* panel (*Fetch device data* button, bluetooth): downloads the device's queued data bursts (only the ones not yet stored
   in the browser), keeps them in the browser and saves them as JSON (same format as the cloud event data)
