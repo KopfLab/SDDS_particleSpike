@@ -5,6 +5,7 @@
 #include "uCoreEnums.h"
 #include "uPlainCommHandler.h"
 #include "uParticleSystem.h"
+#include "uBleSpike.h"
 #include "uRunningStats.h"
 
 // particle spike class
@@ -1809,6 +1810,11 @@ private:
 	// plain comms handler to process sdds variable commands
 	TplainCommHandler Fpch;
 
+#if Wiring_BLE
+	// bluetooth spike: sdds tree access via BLE (status in SYSTEM.bluetooth)
+	TbleSpike Fble;
+#endif
+
 	// Timer for global publishing interval
 	Ttimer FglobalPublishTimer;
 	Ttimer FglobalPublishInfoTimer;
@@ -2043,6 +2049,9 @@ public:
 	 * @param _unit name of unit vars suffix for auto-detecting dynamic units (pass "" to turn auto-detection off)
 	 */
 	TparticleSpike(TmenuHandle &_root, const dtypes::string &_type, const dtypes::string &_dataEvent, dtypes::uint16 _version, const dtypes::string &_unit) : Fpch(_root, nullptr)
+#if Wiring_BLE
+		, Fble(_root)
+#endif
 	{
 		Froot = _root;
 		particleSystem().type = _type;
@@ -2081,6 +2090,14 @@ public:
 			// 	particleSystem().action = TparticleSystem::Taction::___;
 			// }
 		};
+
+#if Wiring_BLE
+		// bluetooth on/off (ignored until the ble spike is started after the state is loaded, see on(sdds::setup()))
+		on(particleSystem().bluetooth.state)
+		{
+			(particleSystem().bluetooth.state == TonOff::ON) ? Fble.enable() : Fble.disable();
+		};
+#endif
 
 		// global publishing interval
 		on(particleSystem().publishing.globalInterval_ms)
@@ -2172,6 +2189,12 @@ public:
 
 			// resetting or loading state?
 			(FresetState) ? particleSystem().saveState(true) : particleSystem().loadState();
+
+#if Wiring_BLE
+			// start bluetooth now that the saved state (on/off and device name) is loaded
+			// advertises the cloud device name (falls back to the device type until it is known)
+			Fble.begin(particleSystem().type, &particleSystem().name, particleSystem().bluetooth.state == TonOff::ON);
+#endif
 
 			// mark startup complete now that state is loaded
 			particleSystem().startup = TparticleSystem::TstartupStatus::complete;
@@ -2342,7 +2365,30 @@ public:
 
 		// convenience particle variable to get the command log
 		Particle.variable("getSddsCommandLog", FcmdLog);
+
+#if Wiring_BLE
+		// bluetooth: mirror the BLE status into SYSTEM.bluetooth.status / .connection
+		// (the ble spike itself is started in on(sdds::setup()) once the saved state is loaded)
+		Fble.onStatusChange([](TbleSpike::Tstatus _status, const char *_peer)
+							{
+			auto &bt = particleSystem().bluetooth;
+			using Tstatus = TparticleSystem::Tbluetooth::Tstatus;
+			Tstatus::e status = (_status == TbleSpike::Tstatus::off) ? Tstatus::off
+							 : (_status == TbleSpike::Tstatus::connected) ? Tstatus::connected
+																			 : Tstatus::discoverable;
+			if (bt.status != status)
+				bt.status = status;
+			if (strcmp(bt.connection, _peer) != 0)
+				bt.connection = _peer; });
+#endif
 	}
+
+#if Wiring_BLE
+	/**
+	 * @brief access to the bluetooth spike (e.g. for diagnostics)
+	 */
+	TbleSpike &ble() { return Fble; }
+#endif
 
 #pragma endregion
 };

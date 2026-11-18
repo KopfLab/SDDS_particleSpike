@@ -52,6 +52,17 @@ public:
     sdds_enum(connecting, connected, disconnected) TinternetStatus;
     sdds_var(TinternetStatus, internet, sdds::opt::readonly, TinternetStatus::connecting); // internet status
 
+    // bluetooth (managed by the particle spike's TbleSpike, see uBleSpike.h)
+    class Tbluetooth : public TmenuHandle
+    {
+    public:
+        sdds_var(TonOff, state, sdds::opt::saveval, TonOff::ON); // bluetooth on/off (saveable, i.e. bluetooth can be turned off permanently)
+        sdds_enum(off, discoverable, connected) Tstatus;
+        sdds_var(Tstatus, status, sdds::opt::readonly, Tstatus::off); // current bluetooth status (always off on platforms without bluetooth)
+        sdds_var(Tstring, connection, sdds::opt::readonly);            // connected client: announced name ("@client ...") + address, or just its (usually randomized) address
+    };
+    sdds_var(Tbluetooth, bluetooth);
+
     // state
     class Tstate : public TmenuHandle
     {
