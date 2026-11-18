@@ -154,7 +154,7 @@ Expanding a struct subscribes to its values (<code>L</code>), collapsing unsubsc
   <section>
     <h2 id="consoleToggle" title="show/hide the console">Console <span class="dot" title="new errors"></span></h2>
     <div id="log"></div>
-    <form id="cmdform"><input id="cmd" placeholder="raw command, e.g.  T   |   settings.slope=2   |   counter" autocomplete="off"><button>Send</button></form>
+    <form id="cmdform"><input id="cmd" placeholder="raw command, e.g.  T   |   SYSTEM.action=restart" autocomplete="off"><button>Send</button></form>
   </section>
 </main>
 <script>
@@ -189,8 +189,11 @@ function log(text, cls = "") {
   while (el.childNodes.length > 500) el.removeChild(el.firstChild);
   el.scrollTop = el.scrollHeight;
 }
+// extra note (e.g. "receiving…" during the tree transfer) sticks until replaced; pass "" to clear it
+let statsExtra = "";
 function updateStats(extra) {
-  $("stats").textContent = `rx ${bytesIn} B · tx ${bytesOut} B · subs ${ports.size}` + (extra ? " · " + extra : "");
+  if (extra !== undefined) statsExtra = extra;
+  $("stats").textContent = `rx ${bytesIn} B · tx ${bytesOut} B · subs ${ports.size}` + (statsExtra ? " · " + statsExtra : "");
 }
 
 /* ---------------- connection handling (shared by all transports) ---------------- */
@@ -201,12 +204,15 @@ function setButtons() {
   $("connectSerial").hidden = connected; $("connectSerial").disabled = !navigator.serial;
   $("disconnect").hidden = !connected;
   $("reload").hidden = !connected;
+  // raw commands need a device to go to
+  $("cmd").disabled = !connected;
+  $("cmdform").querySelector("button").disabled = !connected;
 }
 
 function onConnected(t) {
   transport = t;
   rxBuf = ""; decoder = new TextDecoder(); writeQueue = Promise.resolve();
-  bytesIn = 0; bytesOut = 0; updateStats();
+  bytesIn = 0; bytesOut = 0; updateStats("");
   $("status").textContent = `connected (${t.kind}): ${t.name}`;
   $("status").className = "on";
   setButtons();
@@ -226,7 +232,7 @@ function onDisconnected() {
   $("status").textContent = "not connected"; $("status").className = "";
   rxBuf = ""; ports.clear(); freePorts = []; nextPort = 1;
   setButtons();
-  updateStats();
+  updateStats("");
 }
 
 // incoming bytes from any transport -> newline separated messages
@@ -239,8 +245,9 @@ function onData(bytes) {
     rxBuf = rxBuf.slice(i + 1);
     if (line) handleLine(line);
   }
-  // show progress for large transfers (e.g. the type tree)
+  // show progress for large transfers (e.g. the type tree), otherwise just refresh the rx counter
   if (typesRequestedAt && rxBuf.length > 0) updateStats(`receiving ${rxBuf.length} B…`);
+  else updateStats();
 }
 
 // never show passwords in the console (any variable called "password")
@@ -251,6 +258,8 @@ function maskSecrets(line) {
 function send(line, quiet = false) {
   if (!transport) return;
   if (!quiet) log("> " + maskSecrets(line), "out");
+  // time the type tree transfer from this request (also when T is typed in the console)
+  if (line.trim() === "T") typesRequestedAt = performance.now();
   const data = new TextEncoder().encode(line + "\n");
   const t = transport;
   writeQueue = writeQueue.then(async () => {
@@ -383,10 +392,12 @@ function handleLine(line) {
   const cmd = line[0];
   if (cmd === "t" && line[1] === " ") {
     const m = line.match(/^t (\d+) (.*)$/s);
-    const dt = (performance.now() - typesRequestedAt) / 1000;
-    log(`< t ${m[1]} … (${line.length} chars in ${dt.toFixed(2)} s = ${(line.length / dt / 1024).toFixed(1)} kB/s)`);
+    if (typesRequestedAt) {
+      const dt = (performance.now() - typesRequestedAt) / 1000;
+      log(`< t ${m[1]} … (${line.length} chars in ${dt.toFixed(2)} s = ${(line.length / dt / 1024).toFixed(1)} kB/s)`);
+    } else log(`< t ${m[1]} … (${line.length} chars)`);
     typesRequestedAt = 0;
-    updateStats(`tree ${line.length} B / ${dt.toFixed(1)} s`);
+    updateStats("");  // clear the "receiving…" progress
     try { buildTree(parseLoose(m[2])); } catch (e) { log("could not parse type tree: " + e.message, "err"); }
     return;
   }
@@ -406,7 +417,6 @@ function handleLine(line) {
 function requestTypes() {
   root = null; ports.clear(); freePorts = []; nextPort = 1;
   $("tree").innerHTML = '<div class="hint">loading type tree…</div>';
-  typesRequestedAt = performance.now();
   send("T");
 }
 
