@@ -87,6 +87,17 @@
          border-radius: 6px; background: var(--bg); color: var(--fg); }
   .hint { color: var(--muted); padding: 12px; }
 
+  /* firmware flashing panel (spans the full width above tree + console) */
+  #flashPanel { grid-column: 1 / -1; }
+  #flashPanel .body { padding: 10px 12px; display: grid; gap: 10px; }
+  #flashPanel .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #flashInfo { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: var(--muted); }
+  #flashInfo .bad { color: var(--err); }
+  #flashStep { font-size: 13px; }
+  #flashStep.err { color: var(--err); }
+  #flashStep.ok { color: var(--ok); }
+  #flashProgress { width: 100%; height: 8px; accent-color: var(--accent); }
+
   /* narrow screens: info goes on a second line under the name instead of taking a column */
   @media (max-width: 600px) {
     /* name + info stacked at the top of the left cell, value centered over both */
@@ -115,10 +126,26 @@
   <button id="connectSerial" class="primary">Connect Serial</button>
   <button id="disconnect" hidden>Disconnect</button>
   <button id="reload" hidden>Reload tree</button>
+  <button id="flashOpen" hidden title="flash a new firmware .bin over USB (DFU)">Flash firmware</button>
   <span id="status">not connected</span>
   <span id="stats"></span>
 </header>
 <main>
+  <section id="flashPanel" hidden>
+    <h2>Flash firmware <button id="flashClose" class="toggle">close</button></h2>
+    <div class="body">
+      <div class="row2">
+        <input type="file" id="flashFile" accept=".bin">
+        <button id="flashStart" class="primary" disabled>Flash</button>
+        <button id="flashDfuSelect" class="primary" hidden>Select device in DFU mode</button>
+      </div>
+      <div id="flashInfo">Pick the new firmware file (.bin) and click Flash. The device must be connected via USB and will be put
+into DFU mode: when prompted, you must select the device from the available serial devices, and then select it again once
+the device is in DFU mode.</div>
+      <progress id="flashProgress" value="0" max="1" hidden></progress>
+      <div id="flashStep"></div>
+    </div>
+  </section>
   <section>
     <h2>Tree <button id="infoToggle" class="toggle" title="show/hide the type, saved and read-only info">show info</button></h2>
     <div id="tree"><div class="hint" id="hint"><b>Connect Bluetooth</b> to a device advertising the Nordic UART Service (listed under its cloud device name), or <b>Connect Serial</b> to a device on USB running the SDDS serial spike (115200 baud).
@@ -216,9 +243,14 @@ function onData(bytes) {
   if (typesRequestedAt && rxBuf.length > 0) updateStats(`receiving ${rxBuf.length} B…`);
 }
 
+// never show passwords in the console (any variable called "password")
+function maskSecrets(line) {
+  return line.replace(/^((?:\S*\.)?password)=.*$/, "$1=***");
+}
+
 function send(line, quiet = false) {
   if (!transport) return;
-  if (!quiet) log("> " + line, "out");
+  if (!quiet) log("> " + maskSecrets(line), "out");
   const data = new TextEncoder().encode(line + "\n");
   const t = transport;
   writeQueue = writeQueue.then(async () => {
@@ -273,14 +305,14 @@ async function connectBluetooth() {
 }
 
 /* ---------------- Serial transport (Web Serial, SDDS serial spike) ---------------- */
-async function connectSerial() {
+async function connectSerial(knownPort = null) {
   if (!navigator.serial) {
     log("Web Serial not available - use Chrome/Edge on a desktop computer over https:// or http://localhost", "err");
     return;
   }
-  let port = null;
+  let port = knownPort;
   try {
-    port = await navigator.serial.requestPort();
+    if (!port) port = await navigator.serial.requestPort();
     $("status").textContent = "connecting…";
     await port.open({ baudRate: SERIAL_BAUD });
   } catch (e) {
@@ -300,6 +332,7 @@ async function connectSerial() {
   const info = port.getInfo();
   onConnected({
     kind: "serial",
+    port,
     name: info.usbVendorId === PARTICLE_USB_VID ? "Particle device (USB)"
         : info.usbVendorId !== undefined ? `USB ${info.usbVendorId.toString(16)}:${(info.usbProductId || 0).toString(16)}` : "serial port",
     write: data => writer.write(data),
@@ -453,6 +486,7 @@ function renderNode(n) {
     val.appendChild(btns);
   } else {
     const inp = document.createElement("input");
+    if (n.name === "password") { inp.type = "password"; inp.autocomplete = "new-password"; }
     inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = fmt(n.value); inp.dataset.dirty = ""; inp.blur(); } };
     inp.oninput = () => inp.dataset.dirty = "1";
     inp.onblur = () => { if (inp.dataset.dirty) { inp.dataset.dirty = ""; send(`${n.path}=${inp.value}`); } };
@@ -505,6 +539,315 @@ function unsubscribe(node) {
   updateStats();
 }
 
+/* ---------------- firmware flashing (USB DFU) ----------------
+ * 1. the .bin's module header (first 24 bytes) gives target address, platform and dependencies
+ * 2. DFU mode: opening the device's USB serial port at 14400 baud makes Device OS reset into DFU
+ *    (system_lineCodingBitRateHandler -> System.dfu())
+ * 3. WebUSB + DfuSe (ST's DFU extension used by Particle): erase the sectors, write the image,
+ *    leave DFU (device restarts into the new firmware)
+ * DFU code ported from particle-usb's src/dfu.js (which builds on Devan Lai's webdfu).
+ */
+const DFU_SERIAL_BAUD = 14400;
+const PLATFORMS = { 6: "Photon", 8: "P1", 10: "Electron", 12: "Argon", 13: "Boron", 15: "B SoM", 23: "B5 SoM",
+                    26: "Tracker", 28: "Tracker M", 32: "P2 / Photon 2", 35: "M SoM", 37: "E SoM EXT" };
+const platformName = id => PLATFORMS[id] ? `${PLATFORMS[id]} (${id})` : `platform ${id}`;
+const hex = n => "0x" + n.toString(16).padStart(8, "0");
+
+let flash = { image: null, header: null, usb: null };
+
+function parseModuleHeader(buf) {
+  if (buf.byteLength < 24) throw new Error("file too small for a Particle module");
+  const v = new DataView(buf);
+  const h = {
+    start: v.getUint32(0, true), end: v.getUint32(4, true), flags: v.getUint8(9),
+    version: v.getUint16(10, true), platform: v.getUint16(12, true),
+    func: v.getUint8(14), index: v.getUint8(15),
+    dep: { func: v.getUint8(16), index: v.getUint8(17), version: v.getUint16(18, true) },
+  };
+  const problems = [];
+  if (h.func !== 5) problems.push(`not a user application (module function ${h.func}, expected 5) - only application firmware can be flashed here`);
+  if (h.end + 4 - h.start !== buf.byteLength) problems.push(`size mismatch: header says ${h.end + 4 - h.start} bytes, file has ${buf.byteLength}`);
+  h.problems = problems;
+  return h;
+}
+
+function flashStep(text, cls = "") { $("flashStep").textContent = text; $("flashStep").className = cls; if (text) log("flash: " + text, cls === "err" ? "err" : "sys"); }
+function flashProgress(done, total) { const p = $("flashProgress"); p.hidden = !total; p.max = total || 1; p.value = done || 0; }
+
+$("flashOpen").onclick = () => { $("flashPanel").hidden = false; $("flashPanel").scrollIntoView({ behavior: "smooth" }); };
+$("flashClose").onclick = () => { $("flashPanel").hidden = true; };
+$("flashFile").onchange = async () => {
+  flash.image = flash.header = null; $("flashStart").disabled = true; $("flashDfuSelect").hidden = true;
+  flashStep(""); flashProgress(0, 0);
+  const f = $("flashFile").files[0];
+  if (!f) return;
+  try {
+    const buf = await f.arrayBuffer();
+    const h = parseModuleHeader(buf);
+    const osHint = (f.name.match(/-(\d+\.\d+\.\d+)-/) || [])[1];
+    $("flashInfo").innerHTML = "";
+    const lines = [
+      `file:      ${f.name} (${buf.byteLength} bytes)`,
+      `platform:  ${platformName(h.platform)}`,
+      `address:   ${hex(h.start)} - ${hex(h.end + 4)}`,
+      `requires:  Device OS system module version ${h.dep.version}${osHint ? ` (file name says Device OS ${osHint})` : ""}`,
+      `note:      if the device runs an older Device OS, it restarts in safe mode (breathing magenta) until Device OS is updated`,
+    ];
+    $("flashInfo").textContent = lines.join("\n");
+    for (const p of h.problems) { const d = document.createElement("div"); d.className = "bad"; d.textContent = "✗ " + p; $("flashInfo").appendChild(d); }
+    if (!h.problems.length) { flash.image = new Uint8Array(buf); flash.header = h; $("flashStart").disabled = false; }
+  } catch (e) {
+    $("flashInfo").textContent = ""; flashStep("cannot read firmware: " + e.message, "err");
+  }
+};
+
+// step 1+2: put the device into DFU mode via the 14400 baud trick
+$("flashStart").onclick = async () => {
+  if (!flash.image) return;
+  if (!navigator.serial || !navigator.usb) { flashStep("flashing needs Web Serial and WebUSB (desktop Chrome/Edge)", "err"); return; }
+  $("flashStart").disabled = true;
+  try {
+    // already in DFU mode (e.g. a previous attempt)? then skip straight to the DFU device
+    const dfuPid = 0xD000 | flash.header.platform;
+    const known = (await navigator.usb.getDevices()).filter(d => d.vendorId === PARTICLE_USB_VID && d.productId === dfuPid);
+    if (known.length === 1) { await flashWithDevice(known[0]); return; }
+
+    // find the serial port: the connected one, a previously authorized Particle port, or ask
+    let port = transport && transport.kind === "serial" ? transport.port : null;
+    if (transport) { flashStep("disconnecting…"); await transport.close(); }
+    if (!port) {
+      const ports = (await navigator.serial.getPorts()).filter(p => p.getInfo().usbVendorId === PARTICLE_USB_VID);
+      if (ports.length === 1) port = ports[0];
+    }
+    if (!port) {
+      flashStep("select the device's serial port (to put it into DFU mode)…");
+      port = await navigator.serial.requestPort({ filters: [{ usbVendorId: PARTICLE_USB_VID }] });
+    }
+    flashStep("putting the device into DFU mode…");
+    try { await port.open({ baudRate: DFU_SERIAL_BAUD }); } catch (e) {
+      throw new Error(`could not open the serial port (${e.message}) - close any serial monitor and try again`);
+    }
+    await new Promise(r => setTimeout(r, 500));
+    try { await port.close(); } catch (e) {} // the device usually resets before this
+    await new Promise(r => setTimeout(r, 2000)); // wait for the DFU device to enumerate
+
+    // a previously authorized DFU device needs no second selection
+    const dfu = (await navigator.usb.getDevices()).filter(d => d.vendorId === PARTICLE_USB_VID && d.productId === dfuPid);
+    if (dfu.length === 1) { await flashWithDevice(dfu[0]); return; }
+    flashStep("the device should now blink yellow (DFU mode) - click 'Select device in DFU mode'");
+    $("flashDfuSelect").hidden = false; // the WebUSB picker needs a fresh click
+  } catch (e) {
+    flashStep(e.name === "NotFoundError" ? "no device selected" : "failed: " + e.message, "err");
+    $("flashStart").disabled = false;
+  }
+};
+
+// step 3: pick the DFU device (needs a user click) and flash
+$("flashDfuSelect").onclick = async () => {
+  $("flashDfuSelect").hidden = true;
+  try {
+    const dev = await navigator.usb.requestDevice({ filters: [{ vendorId: PARTICLE_USB_VID, productId: 0xD000 | flash.header.platform }] });
+    await flashWithDevice(dev);
+  } catch (e) {
+    flashStep(e.name === "NotFoundError" ? "no DFU device selected (is it blinking yellow? is it the right platform?)" : "failed: " + e.message, "err");
+    $("flashDfuSelect").hidden = false;
+  }
+};
+
+async function flashWithDevice(dev) {
+  const h = flash.header, data = flash.image;
+  if ((dev.productId & 0xff) !== h.platform) throw new Error(`device is a ${platformName(dev.productId & 0xff)}, firmware is for ${platformName(h.platform)}`);
+  const dfu = new DfuSe(dev);
+  try {
+    flashStep("opening DFU device…");
+    await dfu.open();
+    const seg = dfu.segment(h.start);
+    if (!seg) throw new Error(`address ${hex(h.start)} is outside the device's flash memory map`);
+    if (!seg.writable) throw new Error("the target flash segment is not writable (device protection?)");
+    flashStep(`erasing ${data.byteLength} bytes at ${hex(h.start)}…`);
+    await dfu.erase(h.start, data.byteLength, flashProgress);
+    flashStep("writing firmware…");
+    await dfu.write(h.start, data, flashProgress);
+    flashStep("restarting the device…");
+    await dfu.leave();
+    flashProgress(0, 0);
+    flashStep(`flashed ${$("flashFile").files[0].name} - the device restarts into the new firmware (reconnect once it is up)`, "ok");
+  } finally {
+    await dfu.close();
+    $("flashStart").disabled = false;
+  }
+}
+
+class DfuSe {
+  // DFU 1.1 requests / states, DfuSe commands (AN3156)
+  static DNLOAD = 1; static UPLOAD = 2; static GETSTATUS = 3; static CLRSTATUS = 4; static ABORT = 6;
+  static dfuIDLE = 2; static dfuDNBUSY = 4; static dfuDNLOAD_IDLE = 5; static dfuMANIFEST = 7; static dfuERROR = 10;
+  static SET_ADDRESS = 0x21; static ERASE = 0x41;
+
+  constructor(dev) { this.dev = dev; this.iface = 0; this.xfer = 1024; this.segments = []; }
+
+  async open() {
+    const d = this.dev;
+    await d.open();
+    if (d.configuration === null) await d.selectConfiguration(1);
+    // DFU interface, alternate setting 0 = internal flash (its name is the DfuSe memory map)
+    let alt = null;
+    for (const i of d.configuration.interfaces)
+      for (const a of i.alternates)
+        if (a.interfaceClass === 0xfe && a.interfaceSubclass === 0x01 && a.alternateSetting === 0 && !alt) { alt = a; this.iface = i.interfaceNumber; }
+    if (!alt) throw new Error("no DFU interface found");
+    await d.claimInterface(this.iface);
+    await d.selectAlternateInterface(this.iface, 0);
+    const cfg = await this.configDescriptor();
+    // Chrome on macOS often leaves interfaceName null -> read the string descriptor ourselves
+    let name = alt.interfaceName;
+    if (!name && cfg.iInterface) name = await this.stringDescriptor(cfg.iInterface);
+    this.segments = DfuSe.parseMemoryMap(name || "");
+    if (!this.segments.length) throw new Error(`no flash memory map in DFU interface name "${name}"`);
+    this.xfer = cfg.transferSize || 1024;
+  }
+
+  async getDescriptor(type, index, len, langId = 0) {
+    const r = await this.dev.controlTransferIn({ requestType: "standard", recipient: "device", request: 6, value: (type << 8) | index, index: langId }, len);
+    if (r.status !== "ok") throw new Error(`GET_DESCRIPTOR ${type}/${index} failed: ${r.status}`);
+    return r.data;
+  }
+
+  async stringDescriptor(index) {
+    const len = (await this.getDescriptor(3, index, 1, 0x0409)).getUint8(0);
+    const v = await this.getDescriptor(3, index, len, 0x0409);
+    let s = "";
+    for (let o = 2; o + 1 < v.byteLength; o += 2) s += String.fromCharCode(v.getUint16(o, true));
+    return s;
+  }
+
+  // from the configuration descriptor: iInterface of the DFU interface (alt 0) and wTransferSize (DFU functional descriptor 0x21)
+  async configDescriptor() {
+    const head = await this.getDescriptor(2, 0, 4);
+    const v = await this.getDescriptor(2, 0, head.getUint16(2, true));
+    const out = { iInterface: 0, transferSize: null };
+    let dfu = false;
+    for (let o = 0; o + 1 < v.byteLength && v.getUint8(o) > 0; o += v.getUint8(o)) {
+      const type = v.getUint8(o + 1);
+      if (type === 0x04) {
+        dfu = v.getUint8(o + 5) === 0xfe && v.getUint8(o + 6) === 0x01;
+        if (dfu && v.getUint8(o + 2) === this.iface && v.getUint8(o + 3) === 0 && !out.iInterface) out.iInterface = v.getUint8(o + 8);
+      } else if (type === 0x21 && dfu && v.getUint8(o) >= 7 && out.transferSize === null) {
+        out.transferSize = v.getUint16(o + 5, true);
+      }
+    }
+    return out;
+  }
+
+  async close() { try { await this.dev.close(); } catch (e) {} }
+
+  // "@Internal Flash  /0x08000000/03*004Ka,01*016Kg,..." -> segments
+  static parseMemoryMap(desc) {
+    const segments = [], mult = { " ": 1, B: 1, K: 1024, M: 1048576 };
+    const i = desc.indexOf("/");
+    if (!desc.startsWith("@") || i < 0) return segments;
+    const rgx = /\/\s*(0x[0-9a-fA-F]{1,8})\s*\/(\s*[0-9]+\s*\*\s*[0-9]+\s?[ BKM]\s*[abcdefg]\s*,?\s*)+/g;
+    let m;
+    while ((m = rgx.exec(desc.substring(i))) !== null) {
+      let addr = parseInt(m[1], 16);
+      const srgx = /([0-9]+)\s*\*\s*([0-9]+)\s?([ BKM])\s*([abcdefg])\s*,?\s*/g;
+      let sm;
+      while ((sm = srgx.exec(m[0])) !== null) {
+        const count = parseInt(sm[1], 10), size = parseInt(sm[2], 10) * mult[sm[3]];
+        const props = sm[4].charCodeAt(0) - 96;
+        segments.push({ start: addr, end: addr + size * count, sectorSize: size,
+                        readable: !!(props & 1), erasable: !!(props & 2), writable: !!(props & 4) });
+        addr += size * count;
+      }
+    }
+    return segments;
+  }
+
+  segment(addr) { return this.segments.find(s => s.start <= addr && addr < s.end) || null; }
+
+  out(request, value, data = new Uint8Array(0)) {
+    return this.dev.controlTransferOut({ requestType: "class", recipient: "interface", request, value, index: this.iface }, data);
+  }
+
+  async status() {
+    const r = await this.dev.controlTransferIn({ requestType: "class", recipient: "interface", request: DfuSe.GETSTATUS, value: 0, index: this.iface }, 6);
+    const v = r.data;
+    return { status: v.getUint8(0), pollTimeout: v.getUint8(1) | (v.getUint8(2) << 8) | (v.getUint8(3) << 16), state: v.getUint8(4) };
+  }
+
+  async pollUntil(pred) {
+    let s = await this.status();
+    while (!pred(s.state) && s.state !== DfuSe.dfuERROR) {
+      await new Promise(r => setTimeout(r, s.pollTimeout));
+      s = await this.status();
+    }
+    return s;
+  }
+
+  async idle() {
+    let s;
+    try { s = await this.status(); } catch (e) { await this.out(DfuSe.CLRSTATUS, 0); s = await this.status(); }
+    if (s.state !== DfuSe.dfuIDLE && s.state !== DfuSe.dfuDNLOAD_IDLE) {
+      try { await this.out(DfuSe.CLRSTATUS, 0); } catch (e) {}
+      s = await this.status();
+      if (s.state === DfuSe.dfuERROR) { await this.out(DfuSe.CLRSTATUS, 0); s = await this.status(); }
+    }
+    if (s.state !== DfuSe.dfuIDLE && s.state !== DfuSe.dfuDNLOAD_IDLE) throw new Error(`DFU device not idle (state ${s.state})`);
+  }
+
+  async command(cmd, param) {
+    const p = new Uint8Array(5), v = new DataView(p.buffer);
+    p[0] = cmd; v.setUint32(1, param, true);
+    for (let tries = 4; ; tries--) {
+      try { await this.out(DfuSe.DNLOAD, 0, p); break; }
+      catch (e) { if (tries === 0) throw new Error(`DfuSe command 0x${cmd.toString(16)} failed: ${e.message}`); await new Promise(r => setTimeout(r, 1000)); }
+    }
+    const s = await this.pollUntil(st => st !== DfuSe.dfuDNBUSY);
+    if (s.status !== 0) throw new Error(`DfuSe command 0x${cmd.toString(16)} failed (status ${s.status})`);
+  }
+
+  async erase(start, length, progress) {
+    await this.idle();
+    let seg = this.segment(start);
+    if (!seg) throw new Error(`address ${hex(start)} is outside the flash memory map`);
+    if (!seg.erasable) throw new Error("flash segment is not erasable");
+    let addr = seg.start + Math.floor((start - seg.start) / seg.sectorSize) * seg.sectorSize;
+    const endSeg = this.segment(start + length - 1);
+    if (!endSeg) throw new Error("firmware does not fit into the flash memory map");
+    const end = endSeg.start + (Math.floor((start + length - 1 - endSeg.start) / endSeg.sectorSize) + 1) * endSeg.sectorSize;
+    const total = end - addr, first = addr;
+    while (addr < end) {
+      if (addr >= seg.end) seg = this.segment(addr);
+      if (!seg) throw new Error(`address ${hex(addr)} is outside the flash memory map`);
+      if (!seg.erasable) { addr = seg.end; continue; }
+      await this.command(DfuSe.ERASE, addr);
+      addr += seg.sectorSize;
+      progress(addr - first, total);
+    }
+  }
+
+  async write(start, data, progress) {
+    await this.idle();
+    let sent = 0;
+    while (sent < data.byteLength) {
+      const n = Math.min(this.xfer, data.byteLength - sent);
+      await this.command(DfuSe.SET_ADDRESS, start + sent);
+      await this.out(DfuSe.DNLOAD, 2, data.subarray(sent, sent + n));
+      const s = await this.pollUntil(st => st === DfuSe.dfuDNLOAD_IDLE);
+      if (s.status !== 0) throw new Error(`write failed at ${hex(start + sent)} (status ${s.status}, state ${s.state})`);
+      sent += n;
+      progress(sent, data.byteLength);
+    }
+  }
+
+  // zero length download -> manifest (the device resets, so later requests may fail)
+  async leave() {
+    await this.idle();
+    await this.out(DfuSe.DNLOAD, 2);
+    try { await this.pollUntil(st => st === DfuSe.dfuMANIFEST || st === DfuSe.dfuDNLOAD_IDLE); } catch (e) {}
+  }
+}
+
 /* ---------------- view preferences (remembered per browser) ---------------- */
 // info column hidden and console collapsed by default
 const prefs = (() => { try { return JSON.parse(localStorage.getItem("sddsBrowser.prefs") || "{}"); } catch (e) { return {}; } })();
@@ -521,7 +864,7 @@ applyPrefs();
 
 /* ---------------- UI wiring ---------------- */
 $("connectBle").onclick = connectBluetooth;
-$("connectSerial").onclick = connectSerial;
+$("connectSerial").onclick = () => connectSerial();
 $("disconnect").onclick = () => transport && transport.close();
 $("reload").onclick = () => {
   for (const port of ports.keys()) send(`U ${port}`, true);
@@ -535,6 +878,7 @@ $("cmdform").onsubmit = e => {
 };
 setButtons();
 updateStats();
+$("flashOpen").hidden = !(navigator.serial && navigator.usb);
 
 // phones have no visible devtools -> surface errors and capabilities in the in-page console
 window.addEventListener("error", e => log(`JS error: ${e.message} (${e.filename}:${e.lineno})`, "err"));
