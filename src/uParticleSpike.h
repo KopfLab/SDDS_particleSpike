@@ -913,6 +913,7 @@ private:
 		system_tick_t FlastMemoryCheck = 0;				 // last free memory check when adding burst data
 		system_tick_t FburstDeadline = 0;				 // when the running burst timer fires
 		bool FburstPaused = false;						 // burst timer paused (see addToBurst _pauseTimer)
+		bool FburstRunning = false;						 // burst timer runs out no matter what (has regular data or was resumed)
 		system_tick_t FburstRemaining = 0;				 // time left on the burst timer while paused
 
 		void startBurstTimer(system_tick_t _ms)
@@ -939,6 +940,17 @@ private:
 			FburstData.clear();
 			FminTime = 0;
 			FburstPaused = false;
+			FburstRunning = false;
+			updateBurstPoints(0);
+		}
+
+		/**
+		 * @brief update SYSTEM.publishing.bursts.points (number of data points in the current burst)
+		 */
+		void updateBurstPoints(dtypes::uint32 _n)
+		{
+			if (particleSystem().publishing.bursts.points != _n)
+				particleSystem().publishing.bursts.points = _n;
 		}
 
 	public:
@@ -1058,6 +1070,22 @@ private:
 		}
 
 		/**
+		 * @brief continue a paused burst timer (see addToBurst _pauseTimer), i.e. publish the data that
+		 * accumulated in the current burst with the regular burst timer delay
+		 */
+		void resumeBurst()
+		{
+			// nothing in the burst? --> nothing to resume (data added later starts a new, regular burst)
+			if (FburstData.empty())
+				return;
+			FburstRunning = true;
+			if (!FburstPaused)
+				return;
+			FburstPaused = false;
+			startBurstTimer(FburstRemaining);
+		}
+
+		/**
 		 * @brief add variant data to the current burst
 		 * @param _always whether to add to the burst even if publishing is NOT active
 		 * @param _pauseTimer pause the burst timer (with the time it has left) until data without this
@@ -1118,8 +1146,10 @@ private:
 			if (!found)
 				FburstData.push_back({_d, {_time, _data}});
 
-			// burst timer
-			if (_pauseTimer)
+			// burst timer: pause flagged data only pauses a burst that has nothing but pause flagged data,
+			// once a burst has regular data (or was resumed by the global interval), its timer runs out
+			// and pause flagged data added in the meantime rides along
+			if (_pauseTimer && !FburstRunning)
 			{
 				if (FburstTimer.running())
 				{
@@ -1136,22 +1166,29 @@ private:
 					FburstPaused = true;
 				}
 			}
-			else if (FburstPaused)
+			else
 			{
-				// continue the paused timer
-				FburstPaused = false;
-				startBurstTimer(FburstRemaining);
-			}
-			else if (!FburstTimer.running())
-			{
-				startBurstTimer(particleSystem().publishing.bursts.timer_ms);
+				if (!_pauseTimer)
+					FburstRunning = true;
+				if (FburstPaused)
+				{
+					// continue the paused timer
+					FburstPaused = false;
+					startBurstTimer(FburstRemaining);
+				}
+				else if (!FburstTimer.running())
+				{
+					startBurstTimer(particleSystem().publishing.bursts.timer_ms);
+				}
 			}
 
 			// burst reached its max size? --> queue it right away (if ready, otherwise it keeps
 			// growing until the time is valid, limited by the free memory reserve)
 			// (see SYSTEM.publishing.bursts.maxPoints, 0 = no limit)
+			dtypes::uint32 n = burstPoints(FburstData);
+			updateBurstPoints(n);
 			dtypes::uint32 maxPoints = particleSystem().publishing.bursts.maxPoints;
-			if (maxPoints > 0 && readyToPublish() && burstPoints(FburstData) >= maxPoints)
+			if (maxPoints > 0 && readyToPublish() && n >= maxPoints)
 			{
 				Log.trace("burst reached %u data points, queuing", (unsigned)maxPoints);
 				FburstTimer.stop();
@@ -1193,6 +1230,8 @@ private:
 			}
 			if (bursts > 0)
 				Log.warn("low memory (%lu bytes free): discarded the %lu oldest queued burst(s)", System.freeMemory(), bursts);
+			if (points > 0)
+				updateBurstPoints(burstPoints(FburstData));
 			if (points > 0)
 				Log.warn("low memory (%lu bytes free): discarded the %lu oldest data point(s) of the current burst", System.freeMemory(), points);
 		}
@@ -2542,6 +2581,9 @@ public:
 		on(FglobalPublishTimer)
 		{
 			publishGlobal(); // variables reset themselves after publish
+			// always publish what accumulated in a paused burst at the global interval, even if
+			// there are no globally averaged variables (with data) to continue the burst timer
+			Fpublisher.resumeBurst();
 			startGlobalPublishTimer();
 		};
 

@@ -16,7 +16,9 @@ Updated functions:
 - `TparticlePublisher::addToBurst(Tdescr *_d, system_tick_t _time, const Variant &_data, bool _always = false, bool _pauseTimer = false)`
   has the new parameter `_pauseTimer`: data added with `_pauseTimer = true` pauses the burst timer (keeping
   the time it has left) until regular data is added, so it rides along with the next regular burst instead
-  of triggering a publish by itself.
+  of triggering a publish by itself. Only a burst with nothing but such data is paused: once a burst has
+  regular data (or was resumed at the global interval), its timer runs out and pause flagged data added in
+  the meantime is included.
 
 Together with `bool TparticleSpike::suspendAveraging(Tdescr &_var, bool _suspend)` (0.3.0) this allows
 delimiting events with exact data points (e.g. the last value before and the first value after a
@@ -28,9 +30,15 @@ Other changes:
   (new saveable setting, default 512, `0` = no limit), whether the burst timer is running or paused, so a
   paused burst cannot keep growing without ever being published. This changes the `SYSTEM` tree, devices
   need a structure version bump.
+- a paused burst timer is also resumed whenever the global publishing interval (`globalInterval_ms`)
+  elapses (it runs out the time it had left), even if there are no globally averaged variables (with data)
+  at that point and even if more pause flagged data keeps coming in.
+- new read-only `SYSTEM.publishing.bursts.points`: the number of data points in the current burst (not yet
+  queued), to see when data is accumulating, e.g. while the burst timer is paused.
 - variables published on every change while recording (`varIntervals_ms` = `1`, `publish::EACH`) now pause
   the burst timer: their changes stay in the current burst and are published with the next regular data
-  (averages, fixed intervals, `2` = always) or when the burst reaches `maxPoints`, instead of each change
+  (averages, fixed intervals, `2` = always), at the latest when the global interval elapses, or when the
+  burst reaches `maxPoints`, instead of each change
   causing a publish. `2` (`publish::ALWAYS`) still publishes every change right away.
 
 ## SDDS browser

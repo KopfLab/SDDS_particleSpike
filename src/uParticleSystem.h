@@ -177,6 +177,7 @@ public:
             // sdds_var(Tuint32, size_byte, sdds::opt::saveval, 1024); // how many bytes to collect before a data burst is sent?
             sdds_var(Tuint32, timer_ms, sdds::opt::saveval, 3000); // how many milliseconds to wait at minimum before a data burst is sent?
             sdds_var(Tuint32, maxPoints, sdds::opt::saveval, 512); // queue a burst right away when it reaches this many data points (even if the burst timer is paused), 0 = no limit
+            sdds_var(Tuint32, points, sdds::opt::readonly, 0);     // number of data points in the current burst (not yet queued)
             sdds_var(Tuint32, queued, sdds::opt::readonly, 0);     // number of currently queued bursts
             sdds_var(Tuint32, sending, sdds::opt::readonly, 0);    // number of currently sending bursts
             sdds_var(Tuint32, sent, sdds::opt::readonly, 0);       // number of successfully sent bursts
