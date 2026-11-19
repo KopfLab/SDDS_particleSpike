@@ -1,3 +1,44 @@
+# SDDS particleSpike 0.4.0
+
+## Event data points without extra publishes
+
+New functions:
+
+- `bool TparticleSpike::publishAverage(Tdescr &_var, bool _pauseBurstTimer = false, dtypes::uint32 _minCount = 1)`
+  publishes the running average collected so far for `_var` right away (averaging restarts from there);
+  averages of fewer than `_minCount` values are discarded. Returns `false` if `_var` is not in the published tree.
+- `bool TparticleSpike::publishValue(Tdescr &_var, bool _pauseBurstTimer = false)` adds the current value of
+  `_var` as a single data point (`n: 1` for averaged variables) without affecting the averaging. Returns
+  `false` if `_var` is not in the published tree.
+
+Updated functions:
+
+- `TparticlePublisher::addToBurst(Tdescr *_d, system_tick_t _time, const Variant &_data, bool _always = false, bool _pauseTimer = false)`
+  has the new parameter `_pauseTimer`: data added with `_pauseTimer = true` pauses the burst timer (keeping
+  the time it has left) until regular data is added, so it rides along with the next regular burst instead
+  of triggering a publish by itself.
+
+Together with `bool TparticleSpike::suspendAveraging(Tdescr &_var, bool _suspend)` (0.3.0) this allows
+delimiting events with exact data points (e.g. the last value before and the first value after a
+disturbance) without additional publishes.
+
+Other changes:
+
+- bursts are queued for publishing as soon as they reach `SYSTEM.publishing.bursts.maxPoints` data points
+  (new saveable setting, default 512, `0` = no limit), whether the burst timer is running or paused, so a
+  paused burst cannot keep growing without ever being published. This changes the `SYSTEM` tree, devices
+  need a structure version bump.
+- variables published on every change while recording (`varIntervals_ms` = `1`, `publish::EACH`) now pause
+  the burst timer: their changes stay in the current burst and are published with the next regular data
+  (averages, fixed intervals, `2` = always) or when the burst reaches `maxPoints`, instead of each change
+  causing a publish. `2` (`publish::ALWAYS`) still publishes every change right away.
+
+## SDDS browser
+
+- new *Save device state* button (while connected) as a shortcut for `SYSTEM.action=saveState`, which also
+  publishes the changes of saveable settings (via `SYSTEM.state.lastSave_dt`)
+- page version v0.4.0
+
 # SDDS particleSpike 0.3.0
 
 ## Fixed: averaged values with a single data point published without `n`
@@ -9,7 +50,7 @@ from discrete value changes in the database (`data_n`).
 
 ## Feature: Suspend averaging during known disturbances
 
-`TparticleSpike::suspendAveraging(var, suspend)` excludes periods from the time-weighted average of a
+`bool TparticleSpike::suspendAveraging(Tdescr &_var, bool _suspend)` excludes periods from the time-weighted average of a
 published variable to account for known disturbances that should not be included in averages: value
 changes are not collected while suspended and the suspended time carries no weight. Data collected before
 the suspension is kept and published at the regular time (also if it's just one or two values). The live

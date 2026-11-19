@@ -911,6 +911,15 @@ private:
 		const system_tick_t FpublishcheckInterval = 200; // publish status check timer [ms]
 		Ttimer FpublishCheckTimer;						 // publish check timer
 		system_tick_t FlastMemoryCheck = 0;				 // last free memory check when adding burst data
+		system_tick_t FburstDeadline = 0;				 // when the running burst timer fires
+		bool FburstPaused = false;						 // burst timer paused (see addToBurst _pauseTimer)
+		system_tick_t FburstRemaining = 0;				 // time left on the burst timer while paused
+
+		void startBurstTimer(system_tick_t _ms)
+		{
+			FburstDeadline = millis() + _ms;
+			FburstTimer.start(_ms);
+		}
 
 		void printVariant(const Variant &data)
 		{
@@ -929,6 +938,7 @@ private:
 			FnewBurstData = false;
 			FburstData.clear();
 			FminTime = 0;
+			FburstPaused = false;
 		}
 
 	public:
@@ -971,7 +981,7 @@ private:
 						}
 						FnewBurstData = false;
 					}
-					FburstTimer.start(particleSystem().publishing.bursts.timer_ms);
+					startBurstTimer(particleSystem().publishing.bursts.timer_ms);
 				}
 			};
 
@@ -1050,8 +1060,11 @@ private:
 		/**
 		 * @brief add variant data to the current burst
 		 * @param _always whether to add to the burst even if publishing is NOT active
+		 * @param _pauseTimer pause the burst timer (with the time it has left) until data without this
+		 * flag is added: the data goes into the current burst but does not cause a publish by itself
+		 * (e.g. extra data points delimiting an event that should ride along with the next regular data)
 		 */
-		void addToBurst(Tdescr *_d, system_tick_t _time, const Variant &_data, bool _always = false)
+		void addToBurst(Tdescr *_d, system_tick_t _time, const Variant &_data, bool _always = false, bool _pauseTimer = false)
 		{
 			// safety check
 			if (_d == nullptr)
@@ -1090,21 +1103,61 @@ private:
 
 			// add to existing burst data for this variable
 			FnewBurstData = true;
+			bool found = false;
 			for (size_t i = 0; i < FburstData.size(); ++i)
 			{
 				if (FburstData[i].FdescrPtr == _d)
 				{
 					FburstData[i].Fdataset.push_back({_time, _data});
-					return;
+					found = true;
+					break;
 				}
 			}
 
 			// first burst data for this variable
-			FburstData.push_back({_d, {_time, _data}});
+			if (!found)
+				FburstData.push_back({_d, {_time, _data}});
 
-			// start burst timer if it's not already running
-			if (!FburstTimer.running())
-				FburstTimer.start(particleSystem().publishing.bursts.timer_ms);
+			// burst timer
+			if (_pauseTimer)
+			{
+				if (FburstTimer.running())
+				{
+					// pause with the time left
+					dtypes::TtickCount_signed left = static_cast<dtypes::TtickCount_signed>(FburstDeadline - millis());
+					FburstRemaining = left > 0 ? static_cast<system_tick_t>(left) : 0;
+					FburstTimer.stop();
+					FburstPaused = true;
+				}
+				else if (!FburstPaused)
+				{
+					// new burst that starts paused
+					FburstRemaining = particleSystem().publishing.bursts.timer_ms;
+					FburstPaused = true;
+				}
+			}
+			else if (FburstPaused)
+			{
+				// continue the paused timer
+				FburstPaused = false;
+				startBurstTimer(FburstRemaining);
+			}
+			else if (!FburstTimer.running())
+			{
+				startBurstTimer(particleSystem().publishing.bursts.timer_ms);
+			}
+
+			// burst reached its max size? --> queue it right away (if ready, otherwise it keeps
+			// growing until the time is valid, limited by the free memory reserve)
+			// (see SYSTEM.publishing.bursts.maxPoints, 0 = no limit)
+			dtypes::uint32 maxPoints = particleSystem().publishing.bursts.maxPoints;
+			if (maxPoints > 0 && readyToPublish() && burstPoints(FburstData) >= maxPoints)
+			{
+				Log.trace("burst reached %u data points, queuing", (unsigned)maxPoints);
+				FburstTimer.stop();
+				queueBurst(std::move(FburstData));
+				clearBurst();
+			}
 		}
 
 		/**
@@ -1399,6 +1452,12 @@ private:
 			return TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit);
 		}
 
+		// single data point of the current value (numeric averaged vars report it with n = 1)
+		virtual Variant getPointForPublish()
+		{
+			return TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit);
+		}
+
 		// averaging suspended? (see suspendAveraging)
 		bool Fsuspended = false;
 		virtual void onSuspend() {}
@@ -1496,6 +1555,40 @@ private:
 		bool averagingSuspended() { return Fsuspended; }
 
 		/**
+		 * @brief add the data collected so far (the running average for averaged variables) to the
+		 * burst right away and restart the collection (like a regular publish, just early)
+		 */
+		virtual dtypes::uint32 averagedCount() { return FhasUpdate ? 1 : 0; }
+
+		void publishNow(bool _pauseBurstTimer, dtypes::uint32 _minCount = 1)
+		{
+			if (Fvalue == publish::OFF || !Fpublisher)
+				return;
+			if (!isAveraging())
+			{
+				Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS, _pauseBurstTimer);
+				return;
+			}
+			if (!FhasUpdate)
+				return;
+			// not enough values for an average? --> discard (restart the averaging)
+			if (averagedCount() >= _minCount)
+				Fpublisher->addToBurst(FvarOrigin, getTimeForPublish(), getDataForPublish(), false, _pauseBurstTimer);
+			reset();
+		}
+
+		/**
+		 * @brief add the current value as a single data point (n = 1 for averaged numeric variables)
+		 * to the burst right away, without affecting any ongoing averaging
+		 */
+		void publishPoint(bool _pauseBurstTimer)
+		{
+			if (Fvalue == publish::OFF || !Fpublisher)
+				return;
+			Fpublisher->addToBurst(FvarOrigin, millis(), isAveraging() ? getPointForPublish() : TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS, _pauseBurstTimer);
+		}
+
+		/**
 		 * @brief does this use the global publishing interval?
 		 */
 		bool usesGlobalPublishingInterval()
@@ -1524,10 +1617,13 @@ private:
 				return;
 
 			// is publishing immediate or always? --> publish current value (whatever it is)
+			// EACH (while recording) pauses the burst timer, i.e. changes ride along with the next regular
+			// burst (or are queued when the burst reaches its max size) instead of each causing a publish;
+			// ALWAYS publishes right away (regular burst timer)
 			if (Fvalue == publish::EACH || Fvalue == publish::ALWAYS)
 			{
 				if (Fpublisher)
-					Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS);
+					Fpublisher->addToBurst(FvarOrigin, millis(), TparticleSerializer::serializeData(FvarOrigin, FlinkedUnit), Fvalue == publish::ALWAYS, Fvalue == publish::EACH);
 				return;
 			}
 
@@ -1660,6 +1756,16 @@ private:
 		bool isValueDifferent() override
 		{
 			return (FpreviousValue != originValue());
+		}
+
+		dtypes::uint32 averagedCount() override
+		{
+			return rs.count() + ((FhasLatestValue && !this->Fsuspended) ? 1 : 0);
+		}
+
+		Variant getPointForPublish() override
+		{
+			return TparticleSerializer::serializeData(1, static_cast<dtypes::float64>(this->originValue()), 0, this->FlinkedUnit);
 		}
 
 		void onSuspend() override
@@ -2776,8 +2882,8 @@ public:
 #endif
 
 	/**
-	 * @brief suspend / resume the averaging of a published variable (e.g. a stirrer speed while the
-	 * stirrer is paused for a read): while suspended, value changes are not collected and the
+	 * @brief suspend / resume the averaging of a published variable (e.g. during a known disturbance
+	 * that should not count towards the average): while suspended, value changes are not collected and the
 	 * suspended time does not count towards the time-weighted average. Data collected before the
 	 * suspension is kept and published at the regular time. The live value of the variable is not
 	 * affected. Only applies to averaged variables (AVG_GLOBAL or custom intervals).
@@ -2789,6 +2895,39 @@ public:
 		if (!w)
 			return false;
 		w->suspendAveraging(_suspend);
+		return true;
+	}
+
+	/**
+	 * @brief publish what was collected so far for a variable (its running average if averaged) right
+	 * away instead of at the end of its interval; averaging restarts from there
+	 * @param _pauseBurstTimer pause the burst timer until the next regular data (see addToBurst), i.e.
+	 * this data rides along with the next regular burst instead of causing a publish by itself
+	 * @param _minCount minimum number of averaged values, fewer are discarded (averaging still restarts)
+	 * @return false if the variable is not part of the published tree
+	 */
+	bool publishAverage(Tdescr &_var, bool _pauseBurstTimer = false, dtypes::uint32 _minCount = 1)
+	{
+		TparticleVarWrapper *w = findVariableWrapper(&sddsParticleVariables, &_var);
+		if (!w)
+			return false;
+		w->publishNow(_pauseBurstTimer, _minCount);
+		return true;
+	}
+
+	/**
+	 * @brief publish the current value of a variable as a single data point (n = 1 for averaged
+	 * numeric variables) right away, without affecting its averaging, e.g. to mark the exact time
+	 * and value at the start/end of an event
+	 * @param _pauseBurstTimer pause the burst timer until the next regular data (see addToBurst)
+	 * @return false if the variable is not part of the published tree
+	 */
+	bool publishValue(Tdescr &_var, bool _pauseBurstTimer = false)
+	{
+		TparticleVarWrapper *w = findVariableWrapper(&sddsParticleVariables, &_var);
+		if (!w)
+			return false;
+		w->publishPoint(_pauseBurstTimer);
 		return true;
 	}
 

@@ -53,11 +53,11 @@
   /* info column (type, saved, ro): hidden by default, the "details" checkbox toggles it */
   .meta { display: none; }
   body.show-info .meta { display: block; }
-  body.show-info .row { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 10em; }
+  body.show-info .row { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 13em; }
   /* wide screens: fixed name column so values don't drift far right */
   @media (min-width: 601px) {
     .row { grid-template-columns: minmax(0, 16em) minmax(0, 1fr); }
-    body.show-info .row { grid-template-columns: minmax(0, 16em) minmax(0, 1fr) 10em; }
+    body.show-info .row { grid-template-columns: minmax(0, 16em) minmax(0, 1fr) 13em; }
     .val input { max-width: 20em; }
   }
   .row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
@@ -138,12 +138,13 @@
 </head>
 <body>
 <header>
-  <!-- page version: bump when the page changes (shows which copy is deployed, e.g. on sdds.kopflab.org) -->
-  <h1>SDDS Browser <span class="version">v0.3.0</span></h1>
+  <!-- page version: bump when the page changes (shows which copy is deployed, e.g. on devices.kopflab.org) -->
+  <h1>SDDS Browser <span class="version">v0.4.0</span></h1>
   <button id="connectBle" class="primary">Connect Bluetooth</button>
   <button id="connectSerial" class="primary">Connect Serial</button>
   <button id="disconnect" hidden>Disconnect</button>
   <button id="reload" hidden>Reload tree</button>
+  <button id="saveState" hidden title="save the device state (SYSTEM.action=saveState), this also publishes the changes of saveable settings">Save device state</button>
   <button id="dataOpen" hidden title="download the data queued on the device (bluetooth)">Fetch device data</button>
   <button id="flashOpen" hidden title="flash a new firmware .bin over USB (DFU)">Flash firmware</button>
   <span id="status">not connected</span>
@@ -247,6 +248,7 @@ function setButtons() {
   $("connectSerial").hidden = connected;
   $("disconnect").hidden = !connected;
   $("reload").hidden = !connected;
+  $("saveState").hidden = !connected;
   // the data transfer is a bluetooth spike command
   $("dataOpen").hidden = !(connected && transport.kind === "bluetooth");
   if ($("dataOpen").hidden) $("dataPanel").hidden = true;
@@ -348,7 +350,7 @@ function unsupported(kind) {
   const what = kind === "bluetooth" ? "Bluetooth (Web Bluetooth)" : "USB serial (Web Serial)";
   let html;
   if (!window.isSecureContext)
-    html = `<b>${what} needs a secure page.</b> Open this page via <b>https://</b> (e.g. <a href="https://sdds.kopflab.org">sdds.kopflab.org</a>) or <b>http://localhost</b>.`;
+    html = `<b>${what} needs a secure page.</b> Open this page via <b>https://</b> (e.g. <a href="https://devices.kopflab.org">devices.kopflab.org</a>) or <b>http://localhost</b>.`;
   else if (kind === "bluetooth" && ios)
     html = `<b>${what} is not supported by Safari or any other browser on iPhone/iPad</b> (they all use Safari's engine). Install the free <b>Bluefy</b> browser from the App Store and open this page there.`;
   else if (kind === "bluetooth")
@@ -883,6 +885,7 @@ async function dataClear() {
   catch (e) { dataStep("Could not clear: " + e.message); }
 }
 
+$("saveState").onclick = () => send("SYSTEM.action=saveState");
 $("dataOpen").onclick = () => { $("dataPanel").hidden = false; dataShowStored(); $("dataPanel").scrollIntoView({ behavior: "smooth" }); };
 $("dataClose").onclick = () => { $("dataPanel").hidden = true; };
 $("dataGet").onclick = () => dataRequest();
