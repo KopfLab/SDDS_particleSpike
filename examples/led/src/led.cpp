@@ -79,7 +79,7 @@ SerialLogHandler logHandler(
 static TparticleSpike particleSpike(
     userStruct, // self-describing data structure (SDDS)
     "led",      // structure type name
-    5,          // structure version
+    600,        // structure version
     "Unit"      // auto-detect sdds vars' units based on this suffix
 );
 
