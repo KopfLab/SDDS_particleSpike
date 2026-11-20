@@ -2,14 +2,22 @@
 
 ## Event data points without extra publishes
 
+New publishing mode `AVG_GLOBAL_TRANSITIONS` (`varIntervals_ms` = `-2`): average over the global interval
+with sharp transitions. For the library it is the same as `AVG_GLOBAL` (`-1`); it signals to the firmware
+that the user wants a higher temporal resolution of state transitions for this variable. The firmware
+checks the mode with `getVariableInterval` and decides what to record in addition (e.g. data points
+around transitions with `publishAverage` / `publishValue`, below). Values below `-2` are treated as `-1`.
+
 New functions:
 
 - `bool TparticleSpike::publishAverage(Tdescr &_var, bool _pauseBurstTimer = false, dtypes::uint32 _minCount = 1)`
   publishes the running average collected so far for `_var` right away (averaging restarts from there);
   averages of fewer than `_minCount` values are discarded. Returns `false` if `_var` is not in the published tree.
 - `bool TparticleSpike::publishValue(Tdescr &_var, bool _pauseBurstTimer = false)` adds the current value of
-  `_var` as a single data point (`n: 1` for averaged variables) without affecting the averaging. Returns
-  `false` if `_var` is not in the published tree.
+  `_var` as a single data point (`n: 1` for averaged variables) without affecting the averaging.
+  Returns `false` if `_var` is not in the published tree.
+- `dtypes::int32 TparticleSpike::getVariableInterval(Tdescr &_var)` returns the current publishing interval of
+  `_var` (`publish::OFF` if it is not in the published tree), e.g. to check whether it is in `-2` mode.
 
 Updated functions:
 

@@ -16,7 +16,9 @@ public:
 	// define the publishing interval constants (not an sdds enum)
 	enum publish
 	{
-		AVG_GLOBAL = -1, // average and publish at global interval (if publishing is on!)
+		AVG_GLOBAL_TRANSITIONS = -2, // same as AVG_GLOBAL for the library, signals to the firmware that it should add
+									 // extra data points around state transitions (see getVariableInterval, publishAverage, publishValue)
+		AVG_GLOBAL = -1,			 // average and publish at global interval (if publishing is on!)
 		OFF = 0,		 // never publish
 		EACH = 1,		 // publish each value change immediately (if publishing is on!)
 		ALWAYS = 2,		 // publish each value change even if publishing is off
@@ -1501,7 +1503,7 @@ private:
 		bool Fsuspended = false;
 		virtual void onSuspend() {}
 		virtual void onResume() {}
-		bool isAveraging() { return Fvalue == publish::AVG_GLOBAL || Fvalue > publish::MAX; }
+		bool isAveraging() { return usesGlobalPublishingInterval() || Fvalue > publish::MAX; }
 
 	public:
 		TparticleVarWrapper(Tdescr *_voi, TparticlePublisher *_pub, Tdescr *_unit) : FvarOrigin(_voi), Fpublisher(_pub), FlinkedUnit(_unit)
@@ -1546,6 +1548,10 @@ private:
 
 				// add publish callback
 				FvarOrigin->callbacks()->push_first(&ForiginCbw);
+
+				// unknown negative values --> regular global average
+				if (Fvalue < publish::AVG_GLOBAL_TRANSITIONS)
+					Fvalue = publish::AVG_GLOBAL;
 
 				// if Fvalue is set > MAX --> start own timer
 				if (Fvalue > publish::MAX)
@@ -1632,7 +1638,7 @@ private:
 		 */
 		bool usesGlobalPublishingInterval()
 		{
-			return (Fvalue == publish::AVG_GLOBAL);
+			return (Fvalue == publish::AVG_GLOBAL || Fvalue == publish::AVG_GLOBAL_TRANSITIONS);
 		}
 
 		// methods implemented in derived classes
@@ -2941,8 +2947,20 @@ public:
 	}
 
 	/**
+	 * @brief the current publishing interval of a variable (see SYSTEM.publishing.varIntervals_ms),
+	 * e.g. to check if it is in AVG_GLOBAL_TRANSITIONS mode
+	 * @return the interval (publish::OFF if the variable is not part of the published tree)
+	 */
+	dtypes::int32 getVariableInterval(Tdescr &_var)
+	{
+		TparticleVarWrapper *w = findVariableWrapper(&sddsParticleVariables, &_var);
+		return w ? w->value() : static_cast<dtypes::int32>(publish::OFF);
+	}
+
+	/**
 	 * @brief publish what was collected so far for a variable (its running average if averaged) right
-	 * away instead of at the end of its interval; averaging restarts from there
+	 * away instead of at the end of its interval; averaging restarts from there. Works in any mode, it is
+	 * up to the firmware when to use it (e.g. only in AVG_GLOBAL_TRANSITIONS mode, see getVariableInterval)
 	 * @param _pauseBurstTimer pause the burst timer until the next regular data (see addToBurst), i.e.
 	 * this data rides along with the next regular burst instead of causing a publish by itself
 	 * @param _minCount minimum number of averaged values, fewer are discarded (averaging still restarts)
@@ -2960,7 +2978,8 @@ public:
 	/**
 	 * @brief publish the current value of a variable as a single data point (n = 1 for averaged
 	 * numeric variables) right away, without affecting its averaging, e.g. to mark the exact time
-	 * and value at the start/end of an event
+	 * and value at the start/end of an event. Works in any mode, it is up to the firmware when to use it
+	 * (e.g. only in AVG_GLOBAL_TRANSITIONS mode, see getVariableInterval)
 	 * @param _pauseBurstTimer pause the burst timer until the next regular data (see addToBurst)
 	 * @return false if the variable is not part of the published tree
 	 */
